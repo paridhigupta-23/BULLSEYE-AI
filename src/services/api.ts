@@ -43,6 +43,7 @@ import type {
 } from '../types/index.ts';
 
 const TOKEN_STORAGE_KEY = 'bullseye_token';
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export function getAuthToken(): string | null {
   try {
@@ -67,12 +68,57 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const res = await fetch(url, { ...init, headers });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data?.error || `Request failed (${res.status})`);
+
+  const targetUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
+
+  let res: Response;
+  try {
+    res = await fetch(targetUrl, { ...init, headers });
+  } catch (netErr) {
+    throw new Error(
+      `Network connection to ${targetUrl} failed: ${netErr instanceof Error ? netErr.message : String(netErr)}`,
+    );
   }
-  return data as T;
+
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
+  if (!res.ok) {
+    let errorMsg = `API request to ${url} failed with HTTP ${res.status} (${res.statusText})`;
+    if (isJson) {
+      try {
+        const errorData = await res.json();
+        errorMsg = errorData.error || errorData.message || errorMsg;
+      } catch {
+        // ignore parse failure on error body
+      }
+    } else {
+      try {
+        const text = await res.text();
+        if (text && text.length < 200 && !text.includes('<!DOCTYPE') && !text.includes('<html')) {
+          errorMsg = text.trim();
+        } else if (res.status === 404) {
+          errorMsg = `API route ${url} was not found on the server (HTTP 404).`;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    throw new Error(errorMsg);
+  }
+
+  if (isJson) {
+    return (await res.json()) as T;
+  }
+
+  const rawText = await res.text();
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    throw new Error(
+      `API route ${url} returned a non-JSON response (HTTP ${res.status}). Verify your backend deployment routing.`,
+    );
+  }
 }
 
 export const api = {

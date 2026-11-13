@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   FeatureRow,
   OHLCVRow,
@@ -85,13 +86,27 @@ function parseDateIso(raw: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+function resolveDataDir(): string {
+  const candidates = [
+    path.resolve(process.cwd(), 'data', 'datasets', 'processed'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'datasets', 'processed'),
+    path.resolve('/var/task', 'data', 'datasets', 'processed'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'nifty50_combined_2020_2025.csv'))) {
+      return c;
+    }
+  }
+  return candidates[0];
+}
+
 export function loadDatasets(forceReload = false): LoadedDataset {
   if (cachedDataset && !forceReload) {
     return cachedDataset;
   }
 
   const t0 = performance.now();
-  const dataDir = path.resolve(process.cwd(), 'data', 'datasets', 'processed');
+  const dataDir = resolveDataDir();
   const combinedPath = path.join(dataDir, 'nifty50_combined_2020_2025.csv');
   const featuresPath = path.join(dataDir, 'nifty50_features_2020_2025.csv');
 

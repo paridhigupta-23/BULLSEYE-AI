@@ -1438,6 +1438,11 @@ export async function createBullseyeApp(options?: { withVite?: boolean }) {
     }
   });
 
+  // Fallback 404 JSON handler for any unmatched /api/* routes
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: `API route ${req.method} ${req.path} not found.` });
+  });
+
   if (options?.withVite !== false) {
     const isProd = process.env.NODE_ENV === 'production';
     const distDir = path.resolve(process.cwd(), 'dist');

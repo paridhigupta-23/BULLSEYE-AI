@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { BacktestRunLog, ModelType, TrainingRunLog, UserRole } from './types.ts';
@@ -8,9 +9,23 @@ let dbInstance: DatabaseSync | null = null;
 let currentDbPath: string | null = null;
 
 export function getDbPath(): string {
-  return process.env.BULLSEYE_DB_PATH
-    ? path.resolve(process.cwd(), process.env.BULLSEYE_DB_PATH)
-    : path.resolve(process.cwd(), 'data', 'bullseye.db');
+  if (process.env.BULLSEYE_DB_PATH) {
+    return path.resolve(process.cwd(), process.env.BULLSEYE_DB_PATH);
+  }
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    const tmpDir = os.tmpdir();
+    const tmpDbPath = path.join(tmpDir, 'bullseye.db');
+    const localDbPath = path.resolve(process.cwd(), 'data', 'bullseye.db');
+    if (fs.existsSync(localDbPath) && !fs.existsSync(tmpDbPath)) {
+      try {
+        fs.copyFileSync(localDbPath, tmpDbPath);
+      } catch {
+        // initializeSchema will initialize tables if copy fails
+      }
+    }
+    return tmpDbPath;
+  }
+  return path.resolve(process.cwd(), 'data', 'bullseye.db');
 }
 
 export function hashPassword(password: string): string {

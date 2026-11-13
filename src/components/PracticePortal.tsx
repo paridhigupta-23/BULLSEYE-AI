@@ -54,6 +54,20 @@ export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
       setPortfolio(snap);
     } catch (err) {
       setFeedback({ type: 'err', text: err instanceof Error ? err.message : 'Failed to load portfolio' });
+      setPortfolio((prev) => prev ?? {
+        startingCapital: 1000000,
+        cashBalance: 1000000,
+        holdingsMarketValue: 0,
+        totalPortfolioValue: 1000000,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        totalPnl: 0,
+        totalReturnPct: 0,
+        holdings: [],
+        orders: [],
+        trades: [],
+        equityHistory: [{ timestamp: new Date().toISOString(), portfolioValue: 1000000, cashBalance: 1000000 }],
+      });
     } finally {
       setLoading(false);
     }
