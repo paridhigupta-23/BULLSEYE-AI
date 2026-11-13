@@ -194,6 +194,183 @@ function trainLogisticWeights(
   return { weights, bias };
 }
 
+function buildWindowedFlatVector(stdMatrix: number[][], endIdx: number, windowSize: number): number[] {
+  const p = stdMatrix[0]?.length ?? 13;
+  const flat: number[] = [];
+  for (let lag = windowSize - 1; lag >= 0; lag--) {
+    const srcIdx = Math.max(0, endIdx - lag);
+    const row = stdMatrix[srcIdx];
+    for (let j = 0; j < p; j++) {
+      flat.push(row[j]);
+    }
+  }
+  return flat;
+}
+
+function forwardMlpSingle(
+  x: number[],
+  w1: number[][],
+  b1: number[],
+  w2: number[],
+  b2: number,
+): { hidden: number[]; prob: number } {
+  const hCount = b1.length;
+  const hidden = new Array<number>(hCount);
+  let outZ = b2;
+  for (let h = 0; h < hCount; h++) {
+    let sum = b1[h];
+    const rowW = w1[h];
+    for (let k = 0; k < x.length; k++) {
+      sum += rowW[k] * x[k];
+    }
+    const act = Math.tanh(sum);
+    hidden[h] = act;
+    outZ += w2[h] * act;
+  }
+  return { hidden, prob: sigmoid(outZ) };
+}
+
+function computeBceLoss(
+  XSeq: number[][],
+  y: number[],
+  w1: number[][],
+  b1: number[],
+  w2: number[],
+  b2: number,
+): number {
+  if (XSeq.length === 0) return 0;
+  let total = 0;
+  for (let i = 0; i < XSeq.length; i++) {
+    const { prob } = forwardMlpSingle(XSeq[i], w1, b1, w2, b2);
+    const pClamped = Math.min(1 - 1e-7, Math.max(1e-7, prob));
+    total += -(y[i] * Math.log(pClamped) + (1 - y[i]) * Math.log(1 - pClamped));
+  }
+  return total / XSeq.length;
+}
+
+function trainSequenceMlp(
+  XTrainStd: number[][],
+  yTrain: number[],
+  windowSize = 5,
+  hiddenSize = 14,
+  epochs = 45,
+  lr = 0.06,
+  l2 = 0.015,
+): {
+  windowSize: number;
+  hiddenSize: number;
+  w1: number[][];
+  b1: number[];
+  w2: number[];
+  b2: number;
+  trainLossHistory: Array<{ epoch: number; trainLoss: number; valLoss: number }>;
+  featureImportances: number[];
+} {
+  const n = XTrainStd.length;
+  const p = XTrainStd[0]?.length ?? 13;
+  const inputDim = windowSize * p;
+
+  // Chronological inner validation split (strictly inside XTrain — zero test leakage!)
+  const innerSplit = Math.max(windowSize + 10, Math.floor(n * 0.85));
+  const XSeqTrain: number[][] = [];
+  const ySeqTrain: number[] = [];
+  const XSeqVal: number[][] = [];
+  const ySeqVal: number[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const flat = buildWindowedFlatVector(XTrainStd, i, windowSize);
+    if (i < innerSplit) {
+      XSeqTrain.push(flat);
+      ySeqTrain.push(yTrain[i]);
+    } else {
+      XSeqVal.push(flat);
+      ySeqVal.push(yTrain[i]);
+    }
+  }
+
+  const rng = createSeededRng(7331);
+  const scale1 = Math.sqrt(2 / (inputDim + hiddenSize));
+  const scale2 = Math.sqrt(2 / (hiddenSize + 1));
+  const w1: number[][] = Array.from({ length: hiddenSize }, () =>
+    Array.from({ length: inputDim }, () => (rng() * 2 - 1) * scale1),
+  );
+  const b1 = new Array<number>(hiddenSize).fill(0);
+  const w2 = Array.from({ length: hiddenSize }, () => (rng() * 2 - 1) * scale2);
+  let b2 = 0;
+
+  const trainLossHistory: Array<{ epoch: number; trainLoss: number; valLoss: number }> = [];
+
+  for (let ep = 1; ep <= epochs; ep++) {
+    const dW1: number[][] = Array.from({ length: hiddenSize }, () =>
+      new Array<number>(inputDim).fill(0),
+    );
+    const dB1 = new Array<number>(hiddenSize).fill(0);
+    const dW2 = new Array<number>(hiddenSize).fill(0);
+    let dB2 = 0;
+
+    for (let i = 0; i < XSeqTrain.length; i++) {
+      const x = XSeqTrain[i];
+      const { hidden, prob } = forwardMlpSingle(x, w1, b1, w2, b2);
+      const errOut = prob - ySeqTrain[i];
+      dB2 += errOut;
+
+      for (let h = 0; h < hiddenSize; h++) {
+        const hAct = hidden[h];
+        dW2[h] += errOut * hAct;
+        const errHidden = errOut * w2[h] * (1 - hAct * hAct);
+        dB1[h] += errHidden;
+        const rowDW1 = dW1[h];
+        for (let k = 0; k < inputDim; k++) {
+          rowDW1[k] += errHidden * x[k];
+        }
+      }
+    }
+
+    const invN = 1 / Math.max(1, XSeqTrain.length);
+    b2 -= lr * dB2 * invN;
+    for (let h = 0; h < hiddenSize; h++) {
+      w2[h] -= lr * (dW2[h] * invN + l2 * w2[h]);
+      b1[h] -= lr * (dB1[h] * invN);
+      for (let k = 0; k < inputDim; k++) {
+        w1[h][k] -= lr * (dW1[h][k] * invN + l2 * w1[h][k]);
+      }
+    }
+
+    if (ep === 1 || ep % 5 === 0 || ep === epochs) {
+      const tLoss = computeBceLoss(XSeqTrain, ySeqTrain, w1, b1, w2, b2);
+      const vLoss =
+        XSeqVal.length > 0 ? computeBceLoss(XSeqVal, ySeqVal, w1, b1, w2, b2) : tLoss;
+      trainLossHistory.push({
+        epoch: ep,
+        trainLoss: Math.round(tLoss * 10000) / 10000,
+        valLoss: Math.round(vLoss * 10000) / 10000,
+      });
+    }
+  }
+
+  // Feature sensitivity aggregated across temporal lags
+  const featImp = new Array<number>(p).fill(0);
+  for (let h = 0; h < hiddenSize; h++) {
+    const outMag = Math.abs(w2[h]) + 1e-6;
+    for (let lag = 0; lag < windowSize; lag++) {
+      for (let j = 0; j < p; j++) {
+        featImp[j] += Math.abs(w1[h][lag * p + j]) * outMag;
+      }
+    }
+  }
+
+  return {
+    windowSize,
+    hiddenSize,
+    w1,
+    b1,
+    w2,
+    b2,
+    trainLossHistory,
+    featureImportances: featImp,
+  };
+}
+
 function createSeededRng(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -461,6 +638,7 @@ function predictTreeValue(node: DecisionTreeNode, x: number[]): number {
 export function predictProbabilityWithArtifact(
   artifact: TrainedModelArtifact,
   rawFeatureVector: number[],
+  rawWindowVectors?: number[][],
 ): number {
   const stdX = rawFeatureVector.map((v, j) => (v - artifact.means[j]) / artifact.stds[j]);
 
@@ -488,25 +666,78 @@ export function predictProbabilityWithArtifact(
     return sigmoid(logOdds);
   }
 
+  if (artifact.modelType === 'sequence_mlp' && artifact.mlpNetwork) {
+    const net = artifact.mlpNetwork;
+    const flat: number[] = [];
+    if (rawWindowVectors && rawWindowVectors.length > 0) {
+      const stdSeq = rawWindowVectors.map((vec) =>
+        vec.map((v, j) => (v - artifact.means[j]) / artifact.stds[j]),
+      );
+      for (let lag = net.windowSize - 1; lag >= 0; lag--) {
+        const idx = Math.max(0, stdSeq.length - 1 - lag);
+        flat.push(...stdSeq[idx]);
+      }
+    } else {
+      for (let lag = 0; lag < net.windowSize; lag++) {
+        flat.push(...stdX);
+      }
+    }
+    return forwardMlpSingle(flat, net.w1, net.b1, net.w2, net.b2).prob;
+  }
+
   return 0.5;
 }
 
-export function trainChronologicalModel(
+export function predictProbabilityForRowIndex(
+  artifact: TrainedModelArtifact,
+  rows: FeatureRow[],
+  rowIndex: number,
+): number {
+  const rawVec = extractFeatureVector(rows[rowIndex]);
+  if (artifact.modelType === 'sequence_mlp' && artifact.mlpNetwork) {
+    const w = artifact.mlpNetwork.windowSize;
+    const start = Math.max(0, rowIndex - w + 1);
+    const seq = rows.slice(start, rowIndex + 1).map(extractFeatureVector);
+    return predictProbabilityWithArtifact(artifact, rawVec, seq);
+  }
+  return predictProbabilityWithArtifact(artifact, rawVec);
+}
+
+export interface TrainingCustomOptions {
+  splitRatio?: number;
+  l2?: number;
+  learningRate?: number;
+  epochs?: number;
+  numTrees?: number;
+  maxDepth?: number;
+  hiddenSize?: number;
+  windowSize?: number;
+  trainRowsOverride?: FeatureRow[];
+  testRowsOverride?: FeatureRow[];
+}
+
+export function trainChronologicalModelWithOptions(
   symbol: string,
   rows: FeatureRow[],
   modelType: ModelType,
-  splitRatio = 0.8,
+  options: TrainingCustomOptions = {},
 ): TrainedModelArtifact {
-  if (rows.length < 120) {
-    throw new Error(`Insufficient chronological history for ${symbol} (${rows.length} rows; need at least 120).`);
+  const trainRows =
+    options.trainRowsOverride ??
+    rows.slice(0, Math.floor(rows.length * Math.min(0.9, Math.max(0.5, options.splitRatio ?? 0.8))));
+  const testRows =
+    options.testRowsOverride ??
+    rows.slice(Math.floor(rows.length * Math.min(0.9, Math.max(0.5, options.splitRatio ?? 0.8))));
+
+  if (trainRows.length < 40 || testRows.length < 10) {
+    throw new Error(
+      `Insufficient chronological history for ${symbol} (train ${trainRows.length}, test ${testRows.length}).`,
+    );
   }
 
   const startMs = performance.now();
-  const clampedSplit = Math.min(0.9, Math.max(0.6, splitRatio));
-  const splitIdx = Math.floor(rows.length * clampedSplit);
-
-  const trainRows = rows.slice(0, splitIdx);
-  const testRows = rows.slice(splitIdx);
+  const clampedSplit =
+    options.splitRatio ?? Number((trainRows.length / Math.max(1, trainRows.length + testRows.length)).toFixed(2));
 
   const XTrainRaw = trainRows.map(extractFeatureVector);
   const yTrain = trainRows.map((r) => (r.target_direction >= 0.5 ? 1 : 0));
@@ -524,21 +755,28 @@ export function trainChronologicalModel(
   let forest: DecisionTreeNode[] | undefined;
   let gbTrees: Array<{ tree: DecisionTreeNode; weight: number }> | undefined;
   let gbBaseLogOdds: number | undefined;
+  let mlpNetwork: TrainedModelArtifact['mlpNetwork'] | undefined;
+  let hyperparameters: Record<string, string | number> = {};
   const rawImportances = new Array<number>(p).fill(0);
   let modelLabel = 'Logistic Regression (L2 Baseline)';
 
   if (modelType === 'logistic_regression') {
-    const fitted = trainLogisticWeights(XTrain, yTrain);
+    const l2 = options.l2 ?? 0.05;
+    const epochs = options.epochs ?? 260;
+    const lr = options.learningRate ?? 0.12;
+    hyperparameters = { l2, epochs, learningRate: lr };
+    const fitted = trainLogisticWeights(XTrain, yTrain, l2, epochs, lr);
     weights = fitted.weights;
     bias = fitted.bias;
     for (let j = 0; j < p; j++) {
       rawImportances[j] = Math.abs(weights[j]);
     }
   } else if (modelType === 'random_forest') {
-    modelLabel = 'Random Forest Classifier (25 Trees)';
-    const numTrees = 25;
-    const maxDepth = 4;
-    const minSamplesLeaf = Math.max(8, Math.floor(XTrain.length * 0.015));
+    const numTrees = options.numTrees ?? 25;
+    const maxDepth = options.maxDepth ?? 4;
+    modelLabel = `Random Forest Classifier (${numTrees} Trees)`;
+    const minSamplesLeaf = Math.max(6, Math.floor(XTrain.length * 0.015));
+    hyperparameters = { numTrees, maxDepth, minSamplesLeaf };
     const rng = createSeededRng(4201 + symbol.charCodeAt(0) * 17);
     forest = [];
 
@@ -560,14 +798,18 @@ export function trainChronologicalModel(
       );
       forest.push(tree);
     }
-  } else {
-    modelLabel = 'Gradient Boosted Trees (XGBoost-Style)';
-    const numTrees = 24;
-    const learningRate = 0.08;
-    const maxDepth = 3;
-    const minSamplesLeaf = Math.max(10, Math.floor(XTrain.length * 0.02));
+  } else if (modelType === 'gradient_boosting') {
+    const numTrees = options.numTrees ?? 24;
+    const learningRate = options.learningRate ?? 0.08;
+    const maxDepth = options.maxDepth ?? 3;
+    modelLabel = 'Gradient Boosted Trees (CART Residual Boosting)';
+    const minSamplesLeaf = Math.max(8, Math.floor(XTrain.length * 0.02));
+    hyperparameters = { numTrees, learningRate, maxDepth, minSamplesLeaf };
 
-    const posRate = Math.min(0.95, Math.max(0.05, yTrain.reduce<number>((a, b) => a + b, 0) / yTrain.length));
+    const posRate = Math.min(
+      0.95,
+      Math.max(0.05, yTrain.reduce<number>((a, b) => a + b, 0) / yTrain.length),
+    );
     gbBaseLogOdds = Math.log(posRate / (1 - posRate));
     const currentPreds = new Array<number>(XTrain.length).fill(gbBaseLogOdds);
     const allIndices = Array.from({ length: XTrain.length }, (_, i) => i);
@@ -588,6 +830,27 @@ export function trainChronologicalModel(
         currentPreds[i] += learningRate * predictTreeValue(tree, XTrain[i]);
       }
       gbTrees.push({ tree, weight: learningRate });
+    }
+  } else {
+    const windowSize = options.windowSize ?? 5;
+    const hiddenSize = options.hiddenSize ?? 14;
+    const epochs = options.epochs ?? 45;
+    const lr = options.learningRate ?? 0.06;
+    const l2 = options.l2 ?? 0.015;
+    modelLabel = `Temporal Sequence Neural Net (${windowSize}d Window MLP)`;
+    hyperparameters = { windowSize, hiddenSize, epochs, learningRate: lr, l2 };
+    const net = trainSequenceMlp(XTrain, yTrain, windowSize, hiddenSize, epochs, lr, l2);
+    mlpNetwork = {
+      windowSize: net.windowSize,
+      hiddenSize: net.hiddenSize,
+      w1: net.w1,
+      b1: net.b1,
+      w2: net.w2,
+      b2: net.b2,
+      trainLossHistory: net.trainLossHistory,
+    };
+    for (let j = 0; j < p; j++) {
+      rawImportances[j] = net.featureImportances[j];
     }
   }
 
@@ -629,15 +892,34 @@ export function trainChronologicalModel(
     forest,
     gbTrees,
     gbBaseLogOdds,
+    mlpNetwork,
+    hyperparameters,
+    trainLossHistory: mlpNetwork?.trainLossHistory,
   };
 
+  const combinedSeqRows = [...trainRows, ...testRows];
+  const offset = trainRows.length;
   const testProbs = XTest.map((_, idx) =>
-    predictProbabilityWithArtifact(partialArtifact, XTestRaw[idx]),
+    predictProbabilityForRowIndex(partialArtifact, combinedSeqRows, offset + idx),
   );
   partialArtifact.evaluation = evaluatePredictions(yTest, testProbs, 0.5);
   partialArtifact.trainingDurationMs = Math.max(1, Math.round(performance.now() - startMs));
 
   return partialArtifact;
+}
+
+export function trainChronologicalModel(
+  symbol: string,
+  rows: FeatureRow[],
+  modelType: ModelType,
+  splitRatio = 0.8,
+): TrainedModelArtifact {
+  if (rows.length < 120) {
+    throw new Error(
+      `Insufficient chronological history for ${symbol} (${rows.length} rows; need at least 120).`,
+    );
+  }
+  return trainChronologicalModelWithOptions(symbol, rows, modelType, { splitRatio });
 }
 
 export function explainSinglePrediction(
@@ -658,10 +940,7 @@ export function explainSinglePrediction(
     explanationMethod = 'Exact Linear SHAP (log-odds attribution φ_j = w_j · (x_j − μ_j)/σ_j)';
     rawContribs = artifact.weights.map((w, j) => w * stdX[j]);
   } else {
-    explanationMethod =
-      artifact.modelType === 'random_forest'
-        ? 'Tree Ensemble Feature Importance & Local Perturbation Attribution (Baseline-Replaced)'
-        : 'Gradient Boosting Gain Importance & Local Perturbation Attribution (Baseline-Replaced)';
+    explanationMethod = 'Feature Importance and Baseline-Replaced Perturbation Attribution';
     // Replace each feature with its training mean (baseline) to measure marginal probability impact
     rawContribs = raw.map((_, j) => {
       const perturbed = [...raw];
@@ -908,17 +1187,22 @@ export function calculateRiskMetrics(params: {
 export function runChronologicalBacktest(params: {
   symbol: string;
   rows: FeatureRow[];
-  strategy: 'ml_model' | 'sma_crossover' | 'rsi_mean_reversion';
+  allSymbolRows?: FeatureRow[];
+  strategy: 'ml_model' | 'sma_crossover' | 'rsi_mean_reversion' | 'rsi_macd' | 'combined_ml_tech';
+  modelType?: ModelType;
   artifact?: TrainedModelArtifact;
   initialCapital?: number;
   brokeragePct?: number;
   slippagePct?: number;
   buyThreshold?: number;
+  retrainIntervalBars?: number;
 }): BacktestResult {
   const {
     symbol,
     rows,
+    allSymbolRows,
     strategy,
+    modelType,
     artifact,
     initialCapital = 1000000,
     brokeragePct = 0.05,
@@ -929,6 +1213,24 @@ export function runChronologicalBacktest(params: {
   if (rows.length < 30) {
     throw new Error(`Insufficient rows for backtesting ${symbol}.`);
   }
+
+  const usesMl = strategy === 'ml_model' || strategy === 'combined_ml_tech';
+  const sourceRows = allSymbolRows && allSymbolRows.length > 0 ? allSymbolRows : rows;
+  const dateToFullIdx = new Map<string, number>();
+  for (let idx = 0; idx < sourceRows.length; idx++) {
+    dateToFullIdx.set(sourceRows[idx].date, idx);
+  }
+
+  const activeModelType: ModelType = modelType ?? artifact?.modelType ?? 'logistic_regression';
+  const retrainInterval = Math.max(21, Math.round(params.retrainIntervalBars ?? 63));
+  const useStaticOutOfSampleArtifact =
+    Boolean(artifact) &&
+    !allSymbolRows &&
+    artifact!.trainDateRange.end < rows[0].date;
+
+  let wfArtifact: TrainedModelArtifact | undefined = useStaticOutOfSampleArtifact ? artifact : undefined;
+  let lastRetrainFullIdx = -1;
+  let retrainCount = 0;
 
   const costRate = (brokeragePct + slippagePct) / 100;
   let cash = initialCapital;
@@ -950,6 +1252,7 @@ export function runChronologicalBacktest(params: {
   const equityCurve: BacktestResult['equityCurve'] = [];
 
   // Signal computed on bar t-1 close, executed on bar t open (zero look-ahead bias!)
+  // For ML strategies, models only ever train on rows strictly BEFORE prevBar.date (so targets settled before execution day t).
   for (let t = 0; t < rows.length; t++) {
     const bar = rows[t];
 
@@ -958,15 +1261,47 @@ export function runChronologicalBacktest(params: {
       let desireLong = false;
       let reason = '';
 
-      if (strategy === 'ml_model' && artifact) {
-        const prob = predictProbabilityWithArtifact(artifact, extractFeatureVector(prevBar));
-        desireLong = prob >= buyThreshold;
-        reason = `Model BUY prob ${(prob * 100).toFixed(1)}%`;
+      if (usesMl) {
+        const prevFullIdx = dateToFullIdx.get(prevBar.date) ?? t - 1;
+
+        if (!useStaticOutOfSampleArtifact) {
+          // Strict walk-forward training on settled historical rows strictly before prevBar (< prevFullIdx)
+          if (
+            prevFullIdx >= 120 &&
+            (!wfArtifact || prevFullIdx - lastRetrainFullIdx >= retrainInterval)
+          ) {
+            const trainSlice = sourceRows.slice(0, prevFullIdx);
+            wfArtifact = trainChronologicalModelWithOptions(symbol, trainSlice, activeModelType, {
+              trainRowsOverride: trainSlice,
+              testRowsOverride: trainSlice.slice(-Math.min(10, trainSlice.length)),
+            });
+            lastRetrainFullIdx = prevFullIdx;
+            retrainCount += 1;
+          }
+        }
+
+        if (wfArtifact) {
+          const prob = predictProbabilityForRowIndex(wfArtifact, sourceRows, prevFullIdx);
+          if (strategy === 'ml_model') {
+            desireLong = prob >= buyThreshold;
+            reason = `Walk-Fwd ${wfArtifact.modelType} P(Up) ${(prob * 100).toFixed(1)}%`;
+          } else {
+            const techBullish =
+              prevBar.sma_20 > prevBar.sma_50 &&
+              prevBar.macd > prevBar.macd_signal &&
+              prevBar.rsi_14 < 72;
+            desireLong = prob >= buyThreshold && techBullish;
+            reason = `Walk-Fwd ML ${(prob * 100).toFixed(1)}% + SMA/MACD/RSI Confirmation`;
+          }
+        } else {
+          desireLong = false;
+          reason = 'Walk-forward warmup (< 120 prior sessions)';
+        }
       } else if (strategy === 'sma_crossover') {
         desireLong = prevBar.sma_20 > prevBar.sma_50;
         reason = 'SMA 20 > SMA 50 trend filter';
       } else {
-        // RSI mean reversion + trend guard
+        // RSI + MACD filter
         desireLong = prevBar.rsi_14 < 42 || (prevBar.rsi_14 < 65 && prevBar.macd > prevBar.macd_signal);
         reason = 'RSI + MACD momentum filter';
       }
@@ -1030,7 +1365,7 @@ export function runChronologicalBacktest(params: {
     });
   }
 
-  // Close open position at final close for complete accounting
+  // Close open position at final close for complete accounting & reconcile final equity point
   const lastBar = rows[rows.length - 1];
   if (shares > 0) {
     const grossValue = shares * lastBar.close;
@@ -1052,16 +1387,41 @@ export function runChronologicalBacktest(params: {
       signalReason: `${entryReason} (marked to close)`,
     });
     shares = 0;
+
+    if (equityCurve.length > 0) {
+      if (cash > peakEquity) peakEquity = cash;
+      const finalDd = peakEquity > 0 ? ((peakEquity - cash) / peakEquity) * 100 : 0;
+      if (finalDd > maxDrawdownPct) maxDrawdownPct = finalDd;
+      equityCurve[equityCurve.length - 1] = {
+        ...equityCurve[equityCurve.length - 1],
+        strategyEquity: Math.round(cash * 100) / 100,
+        drawdownPct: Math.round(finalDd * 100) / 100,
+      };
+    }
   }
 
-  const finalEquity = cash;
+  const finalEquity = Math.round(cash * 100) / 100;
   const netProfit = finalEquity - initialCapital;
   const totalReturnPct = (netProfit / initialCapital) * 100;
   const benchmarkFinalEquity = benchmarkShares * lastBar.close;
   const benchmarkReturnPct = ((benchmarkFinalEquity - initialCapital) / initialCapital) * 100;
 
-  const winningTrades = trades.filter((t) => t.netPnl > 0).length;
+  const winningTradeList = trades.filter((t) => t.netPnl > 0);
+  const losingTradeList = trades.filter((t) => t.netPnl <= 0);
+  const winningTrades = winningTradeList.length;
+  const losingTrades = losingTradeList.length;
   const winRatePct = trades.length > 0 ? (winningTrades / trades.length) * 100 : 0;
+
+  const grossProfit = winningTradeList.reduce((acc, tr) => acc + tr.netPnl, 0);
+  const grossLoss = Math.abs(losingTradeList.reduce((acc, tr) => acc + tr.netPnl, 0));
+  const avgWinningTrade = winningTrades > 0 ? grossProfit / winningTrades : 0;
+  const avgLosingTrade = losingTrades > 0 ? -(grossLoss / losingTrades) : 0;
+  const profitFactor: number | null =
+    grossLoss > 1e-6
+      ? Math.round((grossProfit / grossLoss) * 10000) / 10000
+      : grossProfit > 0
+        ? null
+        : 0;
 
   // Annualized Sharpe ratio assuming 252 NSE trading days per year and 6% Indian risk-free rate
   const dailyRf = 0.06 / 252;
@@ -1081,14 +1441,19 @@ export function runChronologicalBacktest(params: {
       : 0;
   const sharpeRatio = stdDaily > 1e-9 ? (meanDailyExcess / stdDaily) * Math.sqrt(252) : 0;
 
+  const resolvedModelLabel = wfArtifact?.modelLabel ?? activeModelType;
   const strategyLabel =
     strategy === 'ml_model'
-      ? artifact
-        ? `${artifact.modelLabel} (Signal ≥ ${(buyThreshold * 100).toFixed(0)}%)`
-        : 'ML Model Strategy'
-      : strategy === 'sma_crossover'
-        ? 'SMA 20 / SMA 50 Trend Crossover'
-        : 'RSI(14) + MACD Momentum Strategy';
+      ? `Walk-Fwd ${resolvedModelLabel} (Signal ≥ ${(buyThreshold * 100).toFixed(0)}%)`
+      : strategy === 'combined_ml_tech'
+        ? `Walk-Fwd ${resolvedModelLabel} + SMA/MACD/RSI Gate`
+        : strategy === 'sma_crossover'
+          ? 'SMA 20 / SMA 50 Trend Crossover'
+          : 'RSI(14) + MACD Momentum Strategy';
+
+  const walkForwardNote = usesMl
+    ? ` Walk-forward ML execution retrained strictly on prior settled bars (< trade date) across ${retrainCount} chronological fold(s) (${retrainInterval}-session cadence), eliminating future training leakage.`
+    : '';
 
   return {
     symbol,
@@ -1104,13 +1469,21 @@ export function runChronologicalBacktest(params: {
     benchmarkReturnPct,
     numberOfTrades: trades.length,
     winningTrades,
+    losingTrades,
     winRatePct,
+    grossProfit: Math.round(grossProfit * 100) / 100,
+    grossLoss: Math.round(grossLoss * 100) / 100,
+    profitFactor,
+    avgWinningTrade: Math.round(avgWinningTrade * 100) / 100,
+    avgLosingTrade: Math.round(avgLosingTrade * 100) / 100,
     maxDrawdownPct,
     sharpeRatio,
-    totalTransactionCosts,
+    totalTransactionCosts: Math.round(totalTransactionCosts * 100) / 100,
     brokeragePct,
     slippagePct,
-    assumptionsNote: `Configurable simulation assumptions: ${brokeragePct}% brokerage + ${slippagePct}% slippage per side, executed at next-session open (zero look-ahead bias). Sharpe annualized at 252 trading days with 6.0% risk-free rate.`,
+    walkForwardLeakageFree: usesMl ? true : undefined,
+    retrainCount: usesMl ? retrainCount : undefined,
+    assumptionsNote: `Configurable simulation assumptions: ${brokeragePct}% brokerage + ${slippagePct}% slippage per side, executed at next-session open (zero look-ahead bias).${walkForwardNote} Sharpe annualized at 252 trading days with 6.0% risk-free rate.`,
     equityCurve,
     recentTrades: trades.slice(-20).reverse(),
   };

@@ -72,6 +72,14 @@ test('Chronological ML training preserves date ordering and trains all 3 model t
 
     const explanation = explainSinglePrediction(artifact, rows[rows.length - 1]);
     assert.equal(explanation.contributions.length, 13);
+    if (modelType === 'logistic_regression') {
+      assert.ok(explanation.explanationMethod.startsWith('Exact Linear SHAP'));
+    } else {
+      assert.equal(
+        explanation.explanationMethod,
+        'Feature Importance and Baseline-Replaced Perturbation Attribution',
+      );
+    }
   }
 });
 
@@ -122,6 +130,36 @@ test('Chronological backtest computes equity curve and deducts transaction costs
 
   assert.equal(res.equityCurve.length, rows.length);
   assert.ok(res.numberOfTrades >= 0);
+  assert.equal(res.winningTrades + res.losingTrades, res.numberOfTrades);
+  assert.ok(res.grossProfit >= 0);
+  assert.ok(res.grossLoss >= 0);
   assert.ok(res.maxDrawdownPct >= 0);
   assert.ok(Number.isFinite(res.sharpeRatio));
+  assert.equal(res.equityCurve[res.equityCurve.length - 1].strategyEquity, res.finalEquity);
+});
+
+test('ML backtest runs strict walk-forward retraining with zero future leakage and full reconciliation', () => {
+  const rows = makeSyntheticFeatureRows(260);
+  const windowRows = rows.slice(140);
+  const res = runChronologicalBacktest({
+    symbol: 'TEST',
+    rows: windowRows,
+    allSymbolRows: rows,
+    strategy: 'ml_model',
+    modelType: 'logistic_regression',
+    initialCapital: 1000000,
+    brokeragePct: 0.05,
+    slippagePct: 0.02,
+    buyThreshold: 0.52,
+    retrainIntervalBars: 30,
+  });
+
+  assert.equal(res.walkForwardLeakageFree, true);
+  assert.ok((res.retrainCount ?? 0) >= 1);
+  assert.equal(res.equityCurve.length, windowRows.length);
+  assert.equal(res.winningTrades + res.losingTrades, res.numberOfTrades);
+  assert.equal(res.equityCurve[res.equityCurve.length - 1].strategyEquity, res.finalEquity);
+  assert.ok(
+    res.profitFactor === null || (typeof res.profitFactor === 'number' && res.profitFactor >= 0),
+  );
 });

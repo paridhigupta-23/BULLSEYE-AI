@@ -7,9 +7,8 @@ import type {
 import {
   classifySignal,
   explainSinglePrediction,
-  extractFeatureVector,
   fitGarch11,
-  predictProbabilityWithArtifact,
+  predictProbabilityForRowIndex,
   trainChronologicalModel,
 } from './quantMath.ts';
 import { buildRuleExplanations, loadDatasets } from './dataLoader.ts';
@@ -71,6 +70,13 @@ class MlModelStore {
     return artifact;
   }
 
+  public setArtifact(symbol: string, modelType: ModelType, artifact: TrainedModelArtifact): void {
+    const sym = symbol.toUpperCase();
+    this.artifacts.set(this.key(sym, modelType), artifact);
+    this.activeModelBySymbol.set(sym, modelType);
+    this.lastTrainingTimestamp = artifact.trainedAt;
+  }
+
   public getArtifact(symbol: string, modelType?: ModelType): TrainedModelArtifact | null {
     const sym = symbol.toUpperCase();
     const chosen = modelType ?? this.activeModelBySymbol.get(sym);
@@ -80,7 +86,12 @@ class MlModelStore {
 
   public listTrainedModelsForSymbol(symbol: string): TrainedModelArtifact[] {
     const sym = symbol.toUpperCase();
-    const types: ModelType[] = ['logistic_regression', 'random_forest', 'gradient_boosting'];
+    const types: ModelType[] = [
+      'logistic_regression',
+      'random_forest',
+      'gradient_boosting',
+      'sequence_mlp',
+    ];
     const list: TrainedModelArtifact[] = [];
     for (const t of types) {
       const art = this.artifacts.get(this.key(sym, t));
@@ -144,8 +155,7 @@ class MlModelStore {
     }
 
     const t0 = performance.now();
-    const rawVec = extractFeatureVector(latestRow);
-    const buyProb = predictProbabilityWithArtifact(artifact, rawVec);
+    const buyProb = predictProbabilityForRowIndex(artifact, rows, rows.length - 1);
     const sellProb = 1 - buyProb;
     const signal = classifySignal(buyProb, threshold);
     const { explanationMethod, contributions } = explainSinglePrediction(artifact, latestRow);

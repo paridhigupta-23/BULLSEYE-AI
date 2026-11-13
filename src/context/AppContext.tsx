@@ -1,5 +1,10 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { TRANSLATIONS, type TranslationBundle } from '../i18n/translations.ts';
+import {
+  INVESTOR_UI_DICT,
+  TRANSLATIONS,
+  type InvestorUiDict,
+  type TranslationBundle,
+} from '../i18n/translations.ts';
 import { api, getAuthToken, setAuthToken } from '../services/api.ts';
 import type { LanguageCode, PortalId, ThemeMode, UserProfile } from '../types/index.ts';
 
@@ -16,6 +21,7 @@ interface AppContextValue {
   language: LanguageCode;
   setLanguage: (lang: LanguageCode) => void;
   t: TranslationBundle;
+  inv: InvestorUiDict;
   portal: PortalId;
   setPortal: (portal: PortalId) => void;
   selectedSymbol: string;
@@ -55,6 +61,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return 'landing';
   });
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (portal === 'landing') {
+      url.searchParams.delete('portal');
+    } else {
+      url.searchParams.set('portal', portal);
+    }
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [portal]);
+
   const [selectedSymbol, setSelectedSymbol] = useState<string>('RELIANCE');
 
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -76,6 +92,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .getMe()
       .then((res) => {
         setUser(res.user);
+        if (res.user.preferredLanguage) {
+          setLanguageState(res.user.preferredLanguage);
+          localStorage.setItem('bullseye_lang', res.user.preferredLanguage);
+        }
       })
       .catch(() => {
         setAuthToken(null);
@@ -96,6 +116,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setLanguage = (lang: LanguageCode) => {
     setLanguageState(lang);
     localStorage.setItem('bullseye_lang', lang);
+    if (user && getAuthToken()) {
+      api
+        .updatePreferences(lang)
+        .then((res) => {
+          setUser((prev) => (prev ? { ...prev, preferredLanguage: res.preferredLanguage } : prev));
+        })
+        .catch(() => {});
+    }
   };
 
   const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
@@ -103,6 +131,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const completeAuthSession = (profile: UserProfile, token: string) => {
     setAuthToken(token);
     setUser(profile);
+    if (profile.preferredLanguage) {
+      setLanguageState(profile.preferredLanguage);
+      localStorage.setItem('bullseye_lang', profile.preferredLanguage);
+    }
     setAuthOpen(false);
   };
 
@@ -133,6 +165,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         language,
         setLanguage,
         t: TRANSLATIONS[language],
+        inv: INVESTOR_UI_DICT[language],
         portal,
         setPortal,
         selectedSymbol,

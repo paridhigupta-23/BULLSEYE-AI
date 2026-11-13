@@ -15,10 +15,15 @@ interface DbUserRow {
   email: string;
   role: UserRole;
   password_hash: string;
+  preferred_language?: string | null;
   created_at: string;
 }
 
 const VALID_ROLES: UserRole[] = ['Investor', 'Broker / Quant', 'Practice Trader'];
+
+function normalizeLang(val?: string | null): 'en' | 'hi' | 'te' {
+  return val === 'hi' || val === 'te' ? val : 'en';
+}
 
 function toSafeUser(row: DbUserRow): AuthUser {
   return {
@@ -27,6 +32,7 @@ function toSafeUser(row: DbUserRow): AuthUser {
     name: row.name,
     email: row.email,
     role: row.role,
+    preferredLanguage: normalizeLang(row.preferred_language),
     createdAt: row.created_at,
   };
 }
@@ -67,7 +73,7 @@ export function authenticateCredentials(params: {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT id, user_code, name, email, role, password_hash, created_at
+      `SELECT id, user_code, name, email, role, password_hash, preferred_language, created_at
        FROM users
        WHERE UPPER(user_code) = UPPER(?) OR LOWER(email) = LOWER(?)
        LIMIT 1`,
@@ -109,6 +115,7 @@ export function registerAccount(params: {
   email: string;
   password: string;
   role: UserRole;
+  preferredLanguage?: 'en' | 'hi' | 'te';
 }):
   | { ok: true; token: string; expiresAt: string; user: AuthUser }
   | { ok: false; status: number; error: string } {
@@ -117,6 +124,7 @@ export function registerAccount(params: {
   const email = params.email.trim().toLowerCase();
   const password = params.password;
   const role = params.role;
+  const preferredLanguage = normalizeLang(params.preferredLanguage);
 
   if (!userCode || userCode.length < 4) {
     return { ok: false, status: 400, error: 'User ID must be at least 4 characters.' };
@@ -148,9 +156,9 @@ export function registerAccount(params: {
   const passwordHash = hashPassword(password);
 
   db.prepare(
-    `INSERT INTO users (id, user_code, name, email, role, password_hash, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, userCode, name, email, role, passwordHash, now);
+    `INSERT INTO users (id, user_code, name, email, role, password_hash, preferred_language, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, userCode, name, email, role, passwordHash, preferredLanguage, now);
 
   if (role === 'Practice Trader') {
     db.prepare(
@@ -175,7 +183,7 @@ export function registerAccount(params: {
     ok: true,
     token,
     expiresAt,
-    user: { id, userCode, name, email, role, createdAt: now },
+    user: { id, userCode, name, email, role, preferredLanguage, createdAt: now },
   };
 }
 
@@ -184,7 +192,7 @@ export function resolveSession(token: string | null): AuthUser | null {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT u.id, u.user_code, u.name, u.email, u.role, u.password_hash, u.created_at, s.expires_at
+      `SELECT u.id, u.user_code, u.name, u.email, u.role, u.password_hash, u.preferred_language, u.created_at, s.expires_at
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.token = ?
@@ -199,6 +207,16 @@ export function resolveSession(token: string | null): AuthUser | null {
   }
 
   return toSafeUser(row);
+}
+
+export function updateUserLanguagePreference(
+  userId: string,
+  language: string,
+): 'en' | 'hi' | 'te' {
+  const normalized = normalizeLang(language);
+  const db = getDb();
+  db.prepare('UPDATE users SET preferred_language = ? WHERE id = ?').run(normalized, userId);
+  return normalized;
 }
 
 export function revokeSession(token: string | null): boolean {
