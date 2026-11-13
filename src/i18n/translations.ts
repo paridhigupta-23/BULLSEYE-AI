@@ -1,4 +1,7 @@
 import type { LanguageCode } from '../types/index.ts';
+import { INVESTOR_UI_DICT, type InvestorUiDict } from './investorTranslations.ts';
+
+export { INVESTOR_UI_DICT, type InvestorUiDict };
 
 export interface TranslationBundle {
   brandTagline: string;

@@ -27,7 +27,7 @@ import type {
 } from '../../types/index.ts';
 
 export const RsiChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) => {
-  const { theme } = useAppContext();
+  const { theme, inv } = useAppContext();
   const isDark = theme === 'dark';
   const data = series
     .filter((d) => d.rsi_14 !== null)
@@ -52,7 +52,7 @@ export const RsiChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) =
           <Line
             type="monotone"
             dataKey="rsi"
-            name="RSI (14)"
+            name={inv.chart.rsiLabel}
             stroke={isDark ? '#A78BFA' : '#6D28D9'}
             strokeWidth={2}
             dot={false}
@@ -64,7 +64,7 @@ export const RsiChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) =
 };
 
 export const MacdChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) => {
-  const { theme } = useAppContext();
+  const { theme, inv } = useAppContext();
   const isDark = theme === 'dark';
   const data = series
     .filter((d) => d.macd !== null && d.macd_signal !== null)
@@ -92,7 +92,7 @@ export const MacdChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) 
           <Line
             type="monotone"
             dataKey="macd"
-            name="MACD"
+            name={inv.chart.macdLabel}
             stroke={isDark ? '#34D399' : '#087F5B'}
             strokeWidth={2}
             dot={false}
@@ -100,7 +100,7 @@ export const MacdChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) 
           <Line
             type="monotone"
             dataKey="signal"
-            name="Signal"
+            name={inv.chart.signalLabel}
             stroke={isDark ? '#B76E85' : '#782F46'}
             strokeWidth={1.75}
             dot={false}
@@ -114,7 +114,7 @@ export const MacdChart: React.FC<{ series: StockSeriesPoint[] }> = ({ series }) 
 export const ContributionChart: React.FC<{ contributions: FeatureContribution[] }> = ({
   contributions,
 }) => {
-  const { theme } = useAppContext();
+  const { theme, inv } = useAppContext();
   const isDark = theme === 'dark';
   const top = contributions.slice(0, 8).map((c) => ({
     label: c.label,
@@ -141,7 +141,7 @@ export const ContributionChart: React.FC<{ contributions: FeatureContribution[] 
             }}
           />
           <ReferenceLine x={0} stroke={isDark ? '#6B7280' : '#94A3B8'} />
-          <Bar dataKey="contribution" name="Impact" radius={[3, 3, 3, 3]}>
+          <Bar dataKey="contribution" name={inv.chart.impactLabel} radius={[3, 3, 3, 3]}>
             {top.map((entry, idx) => (
               <Cell
                 key={idx}

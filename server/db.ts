@@ -86,6 +86,7 @@ function initializeSchema(db: DatabaseSync): void {
       email TEXT UNIQUE NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('Investor', 'Broker / Quant', 'Practice Trader')),
       password_hash TEXT NOT NULL,
+      preferred_language TEXT NOT NULL DEFAULT 'en',
       created_at TEXT NOT NULL
     );
 
@@ -117,6 +118,21 @@ function initializeSchema(db: DatabaseSync): void {
       notes TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL,
       PRIMARY KEY (user_id, symbol),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS investor_orders (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
+      order_type TEXT NOT NULL CHECK (order_type IN ('MARKET', 'LIMIT')),
+      quantity INTEGER NOT NULL CHECK (quantity > 0),
+      price REAL NOT NULL CHECK (price > 0),
+      total_value REAL NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('EXECUTED', 'PLANNED', 'CANCELLED')),
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -205,7 +221,121 @@ function initializeSchema(db: DatabaseSync): void {
       triggered_by TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS broker_clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      broker_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Active',
+      linked_at TEXT NOT NULL,
+      UNIQUE (broker_id, client_id),
+      FOREIGN KEY (broker_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS client_requests (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      broker_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      symbol TEXT,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('Pending', 'Under Review', 'Responded', 'Closed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (broker_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS request_responses (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      broker_id TEXT NOT NULL,
+      response_text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (request_id) REFERENCES client_requests(id) ON DELETE CASCADE,
+      FOREIGN KEY (broker_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS expert_advice (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      broker_id TEXT NOT NULL,
+      request_id TEXT,
+      symbol TEXT,
+      category TEXT NOT NULL,
+      analysis TEXT NOT NULL,
+      recommendation TEXT NOT NULL,
+      supporting_metrics_json TEXT NOT NULL,
+      risk_level TEXT NOT NULL CHECK (risk_level IN ('Low', 'Moderate', 'Elevated', 'High')),
+      disclaimer TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('Draft', 'Sent', 'Read')),
+      generated_at TEXT NOT NULL,
+      sent_at TEXT,
+      read_at TEXT,
+      FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (broker_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS broker_messages (
+      id TEXT PRIMARY KEY,
+      broker_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      sender_role TEXT NOT NULL,
+      message_text TEXT NOT NULL,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (broker_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (client_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS translation_cache (
+      cache_key TEXT PRIMARY KEY,
+      target_lang TEXT NOT NULL,
+      source_text TEXT NOT NULL,
+      translated_text TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_broker_clients_broker ON broker_clients(broker_id);
+    CREATE INDEX IF NOT EXISTS idx_broker_clients_client ON broker_clients(client_id);
+    CREATE INDEX IF NOT EXISTS idx_client_requests_broker ON client_requests(broker_id, status);
+    CREATE INDEX IF NOT EXISTS idx_client_requests_client ON client_requests(client_id);
+    CREATE INDEX IF NOT EXISTS idx_expert_advice_client ON expert_advice(client_id, status);
+    CREATE INDEX IF NOT EXISTS idx_broker_messages_pair ON broker_messages(broker_id, client_id, created_at);
   `);
+
+  // Safe migration for pre-existing users table without preferred_language column
+  const cols = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'preferred_language')) {
+    db.exec(`ALTER TABLE users ADD COLUMN preferred_language TEXT NOT NULL DEFAULT 'en';`);
+  }
+
+  // Safe migrations for existing ml_training_runs table (Model Registry & Experiment History)
+  const mlCols = new Set(
+    (db.prepare('PRAGMA table_info(ml_training_runs)').all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    ),
+  );
+  if (!mlCols.has('experiment_id')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN experiment_id TEXT;`);
+  if (!mlCols.has('train_date_range')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN train_date_range TEXT DEFAULT '';`);
+  if (!mlCols.has('test_date_range')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN test_date_range TEXT DEFAULT '';`);
+  if (!mlCols.has('params_json')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN params_json TEXT DEFAULT '{}';`);
+  if (!mlCols.has('confusion_matrix_json')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN confusion_matrix_json TEXT DEFAULT '{}';`);
+  if (!mlCols.has('status')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN status TEXT DEFAULT 'COMPLETED';`);
+  if (!mlCols.has('backtest_run_id')) db.exec(`ALTER TABLE ml_training_runs ADD COLUMN backtest_run_id INTEGER;`);
+
+  // Safe migrations for existing backtest_runs table
+  const btCols = new Set(
+    (db.prepare('PRAGMA table_info(backtest_runs)').all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    ),
+  );
+  if (!btCols.has('run_code')) db.exec(`ALTER TABLE backtest_runs ADD COLUMN run_code TEXT;`);
+  if (!btCols.has('experiment_id')) db.exec(`ALTER TABLE backtest_runs ADD COLUMN experiment_id TEXT;`);
+  if (!btCols.has('params_json')) db.exec(`ALTER TABLE backtest_runs ADD COLUMN params_json TEXT DEFAULT '{}';`);
 }
 
 export interface DemoAccountSeed {
@@ -299,6 +429,44 @@ function seedDemoAccounts(db: DatabaseSync): void {
     );
   }
 
+  const invOrderCount = db
+    .prepare('SELECT COUNT(*) as cnt FROM investor_orders WHERE user_id = ?')
+    .get('usr-investor-01') as { cnt: number };
+
+  if (invOrderCount.cnt === 0) {
+    const insertInvOrder = db.prepare(`
+      INSERT OR IGNORE INTO investor_orders
+        (id, user_id, symbol, side, order_type, quantity, price, total_value, status, notes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertInvOrder.run(
+      'INV-ORD-1001',
+      'usr-investor-01',
+      'RELIANCE',
+      'BUY',
+      'MARKET',
+      25,
+      1340.0,
+      33500.0,
+      'EXECUTED',
+      'Initial NIFTY 50 core allocation lot',
+      now,
+    );
+    insertInvOrder.run(
+      'INV-ORD-1002',
+      'usr-investor-01',
+      'TCS',
+      'BUY',
+      'LIMIT',
+      10,
+      2888.4,
+      28884.0,
+      'PLANNED',
+      'IT sector accumulation limit reference',
+      now,
+    );
+  }
+
   // Ensure seeded practice trader has initial ₹10,00,000 wallet
   const acct = db
     .prepare('SELECT user_id FROM practice_accounts WHERE user_id = ?')
@@ -314,9 +482,16 @@ function seedDemoAccounts(db: DatabaseSync): void {
       VALUES (?, ?, 1000000, 1000000)
     `).run('usr-practice-01', now);
   }
+
+  // Link seeded demo Investor (usr-investor-01) with seeded demo Broker (usr-broker-01)
+  db.prepare(`
+    INSERT OR IGNORE INTO broker_clients (broker_id, client_id, status, linked_at)
+    VALUES ('usr-broker-01', 'usr-investor-01', 'Active', ?)
+  `).run(now);
 }
 
 export function recordTrainingRun(entry: {
+  experimentId?: string;
   symbol: string;
   modelType: ModelType;
   accuracy: number;
@@ -325,41 +500,66 @@ export function recordTrainingRun(entry: {
   f1Score: number;
   trainSize: number;
   testSize: number;
+  trainDateRange?: string;
+  testDateRange?: string;
+  paramsJson?: string;
+  confusionMatrixJson?: string;
+  status?: string;
+  backtestRunId?: number | null;
   durationMs: number;
   triggeredBy: string;
-}): void {
+}): { id: number; experimentId: string } {
   const db = getDb();
-  db.prepare(`
+  const expId =
+    entry.experimentId ||
+    `EXP-${entry.symbol.toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+  const info = db
+    .prepare(
+      `
     INSERT INTO ml_training_runs
-      (symbol, model_type, accuracy, precision_score, recall_score, f1_score, train_size, test_size, duration_ms, triggered_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    entry.symbol,
-    entry.modelType,
-    entry.accuracy,
-    entry.precisionScore,
-    entry.recallScore,
-    entry.f1Score,
-    entry.trainSize,
-    entry.testSize,
-    entry.durationMs,
-    entry.triggeredBy,
-    new Date().toISOString(),
-  );
+      (experiment_id, symbol, model_type, accuracy, precision_score, recall_score, f1_score,
+       train_size, test_size, train_date_range, test_date_range, params_json, confusion_matrix_json,
+       status, backtest_run_id, duration_ms, triggered_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    )
+    .run(
+      expId,
+      entry.symbol,
+      entry.modelType,
+      entry.accuracy,
+      entry.precisionScore,
+      entry.recallScore,
+      entry.f1Score,
+      entry.trainSize,
+      entry.testSize,
+      entry.trainDateRange ?? '',
+      entry.testDateRange ?? '',
+      entry.paramsJson ?? '{}',
+      entry.confusionMatrixJson ?? '{}',
+      entry.status ?? 'COMPLETED',
+      entry.backtestRunId ?? null,
+      entry.durationMs,
+      entry.triggeredBy,
+      new Date().toISOString(),
+    );
+  return { id: Number(info.lastInsertRowid), experimentId: expId };
 }
 
-export function listTrainingRuns(limit = 20): TrainingRunLog[] {
+export function listTrainingRuns(limit = 30): TrainingRunLog[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, symbol, model_type, accuracy, precision_score, recall_score, f1_score,
-              train_size, test_size, duration_ms, triggered_by, created_at
+      `SELECT id, experiment_id, symbol, model_type, accuracy, precision_score, recall_score, f1_score,
+              train_size, test_size, train_date_range, test_date_range, params_json,
+              confusion_matrix_json, status, backtest_run_id, duration_ms, triggered_by, created_at
        FROM ml_training_runs
        ORDER BY id DESC
        LIMIT ?`,
     )
     .all(limit) as Array<{
     id: number;
+    experiment_id: string | null;
     symbol: string;
     model_type: ModelType;
     accuracy: number;
@@ -368,6 +568,12 @@ export function listTrainingRuns(limit = 20): TrainingRunLog[] {
     f1_score: number;
     train_size: number;
     test_size: number;
+    train_date_range: string | null;
+    test_date_range: string | null;
+    params_json: string | null;
+    confusion_matrix_json: string | null;
+    status: string | null;
+    backtest_run_id: number | null;
     duration_ms: number;
     triggered_by: string;
     created_at: string;
@@ -375,6 +581,7 @@ export function listTrainingRuns(limit = 20): TrainingRunLog[] {
 
   return rows.map((r) => ({
     id: r.id,
+    experimentId: r.experiment_id || `EXP-LEGACY-${r.id}`,
     symbol: r.symbol,
     modelType: r.model_type,
     accuracy: r.accuracy,
@@ -383,6 +590,12 @@ export function listTrainingRuns(limit = 20): TrainingRunLog[] {
     f1Score: r.f1_score,
     trainSize: r.train_size,
     testSize: r.test_size,
+    trainDateRange: r.train_date_range || '',
+    testDateRange: r.test_date_range || '',
+    paramsJson: r.params_json || '{}',
+    confusionMatrixJson: r.confusion_matrix_json || '{}',
+    status: r.status || 'COMPLETED',
+    backtestRunId: r.backtest_run_id ?? null,
     durationMs: r.duration_ms,
     triggeredBy: r.triggered_by,
     createdAt: r.created_at,
@@ -390,6 +603,8 @@ export function listTrainingRuns(limit = 20): TrainingRunLog[] {
 }
 
 export function recordBacktestRun(entry: {
+  runCode?: string;
+  experimentId?: string | null;
   symbol: string;
   strategy: string;
   totalReturnPct: number;
@@ -397,38 +612,74 @@ export function recordBacktestRun(entry: {
   sharpeRatio: number;
   maxDrawdownPct: number;
   numberOfTrades: number;
+  paramsJson?: string;
   triggeredBy: string;
-}): void {
+}): { id: number; runCode: string } {
   const db = getDb();
-  db.prepare(`
+  const code =
+    entry.runCode || `BT-${entry.symbol.toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+  const info = db
+    .prepare(
+      `
     INSERT INTO backtest_runs
-      (symbol, strategy, total_return_pct, benchmark_return_pct, sharpe_ratio, max_drawdown_pct, number_of_trades, triggered_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    entry.symbol,
-    entry.strategy,
-    entry.totalReturnPct,
-    entry.benchmarkReturnPct,
-    entry.sharpeRatio,
-    entry.maxDrawdownPct,
-    entry.numberOfTrades,
-    entry.triggeredBy,
-    new Date().toISOString(),
-  );
+      (run_code, experiment_id, symbol, strategy, total_return_pct, benchmark_return_pct,
+       sharpe_ratio, max_drawdown_pct, number_of_trades, params_json, triggered_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    )
+    .run(
+      code,
+      entry.experimentId ?? null,
+      entry.symbol,
+      entry.strategy,
+      entry.totalReturnPct,
+      entry.benchmarkReturnPct,
+      entry.sharpeRatio,
+      entry.maxDrawdownPct,
+      entry.numberOfTrades,
+      entry.paramsJson ?? '{}',
+      entry.triggeredBy,
+      new Date().toISOString(),
+    );
+
+  const btId = Number(info.lastInsertRowid);
+  if (entry.experimentId) {
+    db.prepare(`UPDATE ml_training_runs SET backtest_run_id = ? WHERE experiment_id = ?`).run(
+      btId,
+      entry.experimentId,
+    );
+  } else {
+    // Link latest matching symbol training run if none linked yet
+    const latestRun = db
+      .prepare(
+        `SELECT id FROM ml_training_runs WHERE symbol = ? AND backtest_run_id IS NULL ORDER BY id DESC LIMIT 1`,
+      )
+      .get(entry.symbol) as { id: number } | undefined;
+    if (latestRun) {
+      db.prepare(`UPDATE ml_training_runs SET backtest_run_id = ? WHERE id = ?`).run(
+        btId,
+        latestRun.id,
+      );
+    }
+  }
+
+  return { id: btId, runCode: code };
 }
 
-export function listBacktestRuns(limit = 15): BacktestRunLog[] {
+export function listBacktestRuns(limit = 25): BacktestRunLog[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, symbol, strategy, total_return_pct, benchmark_return_pct, sharpe_ratio,
-              max_drawdown_pct, number_of_trades, triggered_by, created_at
+      `SELECT id, run_code, experiment_id, symbol, strategy, total_return_pct, benchmark_return_pct,
+              sharpe_ratio, max_drawdown_pct, number_of_trades, params_json, triggered_by, created_at
        FROM backtest_runs
        ORDER BY id DESC
        LIMIT ?`,
     )
     .all(limit) as Array<{
     id: number;
+    run_code: string | null;
+    experiment_id: string | null;
     symbol: string;
     strategy: string;
     total_return_pct: number;
@@ -436,12 +687,15 @@ export function listBacktestRuns(limit = 15): BacktestRunLog[] {
     sharpe_ratio: number;
     max_drawdown_pct: number;
     number_of_trades: number;
+    params_json: string | null;
     triggered_by: string;
     created_at: string;
   }>;
 
   return rows.map((r) => ({
     id: r.id,
+    runCode: r.run_code || `BT-LEGACY-${r.id}`,
+    experimentId: r.experiment_id ?? null,
     symbol: r.symbol,
     strategy: r.strategy,
     totalReturnPct: r.total_return_pct,
@@ -449,7 +703,31 @@ export function listBacktestRuns(limit = 15): BacktestRunLog[] {
     sharpeRatio: r.sharpe_ratio,
     maxDrawdownPct: r.max_drawdown_pct,
     numberOfTrades: r.number_of_trades,
+    paramsJson: r.params_json || '{}',
     triggeredBy: r.triggered_by,
     createdAt: r.created_at,
   }));
 }
+
+export function listRealInvestorAggregateHoldings(): Array<{
+  symbol: string;
+  totalQuantity: number;
+  avgCostBasis: number;
+}> {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT symbol, SUM(quantity) as total_qty,
+              SUM(quantity * avg_buy_price) / NULLIF(SUM(quantity), 0) as weighted_avg
+       FROM investor_holdings
+       GROUP BY symbol
+       HAVING total_qty > 0`,
+    )
+    .all() as Array<{ symbol: string; total_qty: number; weighted_avg: number }>;
+  return rows.map((r) => ({
+    symbol: r.symbol,
+    totalQuantity: Number(r.total_qty),
+    avgCostBasis: Number(r.weighted_avg),
+  }));
+}
+

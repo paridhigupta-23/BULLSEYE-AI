@@ -31,7 +31,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   height = 400,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { theme } = useAppContext();
+  const { theme, inv } = useAppContext();
 
   useEffect(() => {
     const el = containerRef.current;
@@ -192,7 +192,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   if (series.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-500">
-        No OHLCV data available for this selection.
+        {inv.chart.noOhlcv}
       </div>
     );
   }
