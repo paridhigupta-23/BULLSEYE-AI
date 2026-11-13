@@ -360,6 +360,99 @@ export interface PortfolioSnapshot {
   }>;
 }
 
+export interface PracticeHoldingsHealth {
+  totalHoldingsCount: number;
+  diversificationScore: number;
+  hhi: number;
+  concentrations: Array<{
+    symbol: string;
+    marketValue: number;
+    allocationPct: number;
+    isConcentrated: boolean;
+  }>;
+  totalAtrRiskExposure: number;
+  cashBufferRating: 'OPTIMAL' | 'LOW' | 'HIGH';
+  cashBufferPct: number;
+  technicalBiases: Array<{
+    symbol: string;
+    currentPrice: number;
+    atr14: number;
+    trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    rsi14: number;
+    rsiStatus: 'OVERBOUGHT' | 'OVERSOLD' | 'NORMAL';
+    macdSignal: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  }>;
+}
+
+export interface PracticeBehavioralAnalytics {
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRatePct: number;
+  profitFactor: number | null;
+  avgWin: number;
+  avgLoss: number;
+  payoffRatio: number | null;
+  largestWin: number;
+  largestLoss: number;
+  marketOrdersCount: number;
+  limitOrdersCount: number;
+  fillRatePct: number;
+  disciplineScore: number;
+  disciplineRemarks: string[];
+}
+
+export interface PracticeStressScenario {
+  id: string;
+  name: string;
+  description: string;
+  marketShockPct: number;
+  shockedPortfolioValue: number;
+  simulatedPnL: number;
+  simulatedPnLPct: number;
+  effectivePortfolioShockPct: number;
+  holdingImpacts: Array<{
+    symbol: string;
+    currentMarketValue: number;
+    shockedMarketValue: number;
+    lossGain: number;
+  }>;
+}
+
+export interface PracticeIntelligenceData {
+  userId: string;
+  portfolio: PortfolioSnapshot;
+  holdingsHealth: PracticeHoldingsHealth;
+  behavioralAnalytics: PracticeBehavioralAnalytics;
+  stressScenarios: PracticeStressScenario[];
+  generatedAt: string;
+}
+
+export interface PracticeSimulatedOrderResult {
+  isSimulated: true;
+  simulationNote: string;
+  actualWalletBefore: {
+    cashBalance: number;
+    totalPortfolioValue: number;
+    holdingsCount: number;
+  };
+  hypotheticalTrade: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    quantity: number;
+    price: number;
+    totalValue: number;
+  };
+  canAfford: boolean;
+  canExecute: boolean;
+  executionIssue?: string;
+  projectedCashBalance: number;
+  projectedPortfolioValue: number;
+  projectedAllocationPct: number;
+  concentrationWarning: boolean;
+  projectedHoldingsCount: number;
+}
+
 export type UserRole = 'Investor' | 'Broker / Quant' | 'Practice Trader';
 export type LanguageCode = 'en' | 'hi' | 'te';
 

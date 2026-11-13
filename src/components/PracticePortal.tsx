@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, LogOut, RotateCcw, ShieldAlert, XCircle } from 'lucide-react';
+import { Activity, Bot, BrainCircuit, LogOut, RotateCcw, ShieldAlert, XCircle } from 'lucide-react';
 import { useAppContext } from '../context/AppContext.tsx';
 import { api } from '../services/api.ts';
 import {
@@ -9,6 +9,7 @@ import {
   type StockSummary,
 } from '../types/index.ts';
 import { AllocationPieChart } from './charts/IndicatorCharts.tsx';
+import { PracticeIntelligenceView } from './practice/PracticeIntelligenceView.tsx';
 
 interface PracticePortalProps {
   stocks: StockSummary[];
@@ -17,6 +18,22 @@ interface PracticePortalProps {
 export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
   const { selectedSymbol, setSelectedSymbol, t, openAiWithContext, user, logoutUser } =
     useAppContext();
+
+  const [subPortalTab, setSubPortalTab] = useState<'home' | 'intelligence'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tParam = params.get('tab');
+    return tParam === 'intelligence' ? 'intelligence' : 'home';
+  });
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (subPortalTab === 'home') {
+      url.searchParams.delete('tab');
+    } else {
+      url.searchParams.set('tab', 'intelligence');
+    }
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [subPortalTab]);
 
   const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,10 +147,53 @@ export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
         </button>
       </div>
 
-      {/* Simulated Notice */}
-      <div className="rounded-xl border border-[#087F5B]/30 bg-[#087F5B]/10 px-4 py-3 text-xs font-medium text-slate-900 dark:border-[#34D399]/30 dark:bg-[#34D399]/10 dark:text-slate-100">
-        {t.simulatedBanner} Reference prices come from the historical dataset close ({currentStock?.latestDate ?? '2025-09-30'}).
+      {/* Sub-Portal Navigation: Home vs Practice Intelligence */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 dark:border-slate-800">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setSubPortalTab('home')}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
+              subPortalTab === 'home'
+                ? 'bg-[#087F5B] text-white shadow-sm dark:bg-[#34D399] dark:text-slate-950'
+                : 'bg-white text-slate-700 hover:bg-slate-100 dark:bg-[#1F2937] dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Activity className="h-3.5 w-3.5" />
+            <span>Trading Terminal (Home)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubPortalTab('intelligence')}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
+              subPortalTab === 'intelligence'
+                ? 'bg-[#087F5B] text-white shadow-sm dark:bg-[#34D399] dark:text-slate-950'
+                : 'bg-white text-slate-700 hover:bg-slate-100 dark:bg-[#1F2937] dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}
+          >
+            <BrainCircuit className="h-3.5 w-3.5" />
+            <span>Practice Intelligence (5 Simulators)</span>
+          </button>
+        </div>
+
+        <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+          Virtual Capital: ₹10,00,000.00 · Mode: {subPortalTab === 'home' ? 'Execution' : 'Intelligence'}
+        </span>
       </div>
+
+      {subPortalTab === 'intelligence' && portfolio ? (
+        <PracticeIntelligenceView
+          stocks={stocks}
+          portfolio={portfolio}
+          onRefreshPortfolio={loadPortfolio}
+          user={user}
+        />
+      ) : (
+        <>
+          {/* Simulated Notice */}
+          <div className="rounded-xl border border-[#087F5B]/30 bg-[#087F5B]/10 px-4 py-3 text-xs font-medium text-slate-900 dark:border-[#34D399]/30 dark:bg-[#34D399]/10 dark:text-slate-100">
+            {t.simulatedBanner} Reference prices come from the historical dataset close ({currentStock?.latestDate ?? '2025-09-30'}).
+          </div>
 
       {/* Wallet KPIs */}
       {loading || !portfolio ? (
@@ -602,6 +662,8 @@ export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
             </div>
           </div>
         </section>
+      )}
+        </>
       )}
     </div>
   );

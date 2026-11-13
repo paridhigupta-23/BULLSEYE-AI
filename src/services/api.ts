@@ -25,6 +25,8 @@ import type {
   OptimizationResult,
   PipelineStage,
   PortfolioSnapshot,
+  PracticeIntelligenceData,
+  PracticeSimulatedOrderResult,
   PredictionResult,
   PythonEnvironmentStatus,
   RiskMetrics,
@@ -582,6 +584,20 @@ export const api = {
 
   resetPortfolio: () =>
     fetchJson<{ portfolio: PortfolioSnapshot }>('/api/practice/reset', { method: 'POST' }),
+
+  getPracticeIntelligence: () => fetchJson<PracticeIntelligenceData>('/api/practice/intelligence'),
+
+  simulateTradeImpact: (payload: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    quantity: number;
+    price?: number;
+  }) =>
+    fetchJson<PracticeSimulatedOrderResult>('/api/practice/simulate-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
 
   // AI Assistant
   chatWithAi: (payload: {

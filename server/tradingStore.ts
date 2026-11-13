@@ -1,6 +1,16 @@
 import { loadDatasets } from './dataLoader.ts';
 import { getDb } from './db.ts';
-import type { HoldingPosition, OrderRecord, PortfolioSnapshot, TradeRecord } from './types.ts';
+import type {
+  HoldingPosition,
+  OrderRecord,
+  PortfolioSnapshot,
+  PracticeBehavioralAnalytics,
+  PracticeHoldingsHealth,
+  PracticeIntelligenceData,
+  PracticeSimulatedOrderResult,
+  PracticeStressScenario,
+  TradeRecord,
+} from './types.ts';
 
 export const STARTING_VIRTUAL_CAPITAL = 1000000; // ₹10,00,000
 const DEFAULT_PRACTICE_USER_ID = 'usr-practice-01';
@@ -512,4 +522,339 @@ export function resetPracticePortfolio(
   db.prepare('UPDATE practice_accounts SET updated_at = ? WHERE user_id = ?').run(now, userId);
 
   return getPortfolioSnapshot(userId, dbPath);
+}
+
+// ==================== PRACTICE INTELLIGENCE (ZERO-MUTATION) ====================
+
+const STANDARD_STRESS_SCENARIOS = [
+  {
+    id: 'nifty_flash_crash_5',
+    name: 'NIFTY Flash Crash (-5%)',
+    description: 'Sudden intra-day market drop across all equities; cash reserves remain fully liquid and unaffected.',
+    marketShockPct: -0.05,
+  },
+  {
+    id: 'market_correction_10',
+    name: 'Severe Market Correction (-10%)',
+    description: 'Macro headwind causing a -10% equity pullback across Indian large-cap holdings.',
+    marketShockPct: -0.10,
+  },
+  {
+    id: 'bull_rally_5',
+    name: 'NIFTY Bull Rally (+5%)',
+    description: 'Positive macroeconomic earnings surge lifting all equity positions by +5%.',
+    marketShockPct: 0.05,
+  },
+  {
+    id: 'volatility_spike_atr',
+    name: 'Elevated Volatility Spike (-6.5%)',
+    description: 'Sudden ATR surge triggering widespread trailing stops and an average -6.5% equity decline.',
+    marketShockPct: -0.065,
+  },
+  {
+    id: 'tail_risk_var99',
+    name: 'Historical 99% Tail Risk (-8%)',
+    description: 'Worst-case 1-day Value-at-Risk parametric stress event on equity assets.',
+    marketShockPct: -0.08,
+  },
+];
+
+export function getPracticeIntelligence(
+  userId = DEFAULT_PRACTICE_USER_ID,
+  dbPath?: string,
+): PracticeIntelligenceData {
+  const portfolio = getPortfolioSnapshot(userId, dbPath);
+  const dataset = loadDatasets();
+
+  // 1. Holdings Health & Diagnostic
+  const holdings = portfolio.holdings;
+  const totalHoldingsCount = holdings.length;
+  let hhi = 0;
+  if (portfolio.totalPortfolioValue > 0) {
+    for (const h of holdings) {
+      const weight = h.marketValue / portfolio.totalPortfolioValue;
+      hhi += weight * weight;
+    }
+  }
+  const diversificationScore =
+    totalHoldingsCount === 0
+      ? 100
+      : Math.max(10, Math.min(100, Math.round((1 - Math.min(1, hhi)) * 100)));
+
+  const concentrations = holdings.map((h) => ({
+    symbol: h.symbol,
+    marketValue: h.marketValue,
+    allocationPct: Number(h.allocationPct.toFixed(2)),
+    isConcentrated: h.allocationPct > 25,
+  }));
+
+  const totalAtrRiskExposure = holdings.reduce(
+    (sum, h) => sum + 1.5 * h.atr14 * h.quantity,
+    0,
+  );
+
+  const cashBufferPct =
+    portfolio.totalPortfolioValue > 0
+      ? Number(((portfolio.cashBalance / portfolio.totalPortfolioValue) * 100).toFixed(2))
+      : 100;
+
+  const cashBufferRating: 'OPTIMAL' | 'LOW' | 'HIGH' =
+    cashBufferPct < 10 ? 'LOW' : cashBufferPct > 55 ? 'HIGH' : 'OPTIMAL';
+
+  const technicalBiases = holdings.map((h) => {
+    const feat = dataset.featuresBySymbol.get(h.symbol);
+    const latestFeat = feat?.[feat.length - 1];
+    const rsi14 = latestFeat?.rsi_14 ?? 50;
+    const sma20 = latestFeat?.sma_20 ?? h.currentPrice;
+    const sma50 = latestFeat?.sma_50 ?? h.currentPrice;
+    const macd = latestFeat?.macd ?? 0;
+    const macdSignalVal = latestFeat?.macd_signal ?? 0;
+
+    let trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    if (h.currentPrice > sma20 && sma20 > sma50) trend = 'BULLISH';
+    else if (h.currentPrice < sma20 && sma20 < sma50) trend = 'BEARISH';
+
+    const rsiStatus: 'OVERBOUGHT' | 'OVERSOLD' | 'NORMAL' =
+      rsi14 > 70 ? 'OVERBOUGHT' : rsi14 < 30 ? 'OVERSOLD' : 'NORMAL';
+
+    const macdSignal: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+      macd >= macdSignalVal ? 'BULLISH' : 'BEARISH';
+
+    return {
+      symbol: h.symbol,
+      currentPrice: h.currentPrice,
+      atr14: h.atr14,
+      trend,
+      rsi14: Number(rsi14.toFixed(1)),
+      rsiStatus,
+      macdSignal,
+    };
+  });
+
+  const holdingsHealth: PracticeHoldingsHealth = {
+    totalHoldingsCount,
+    diversificationScore,
+    hhi: Number(hhi.toFixed(4)),
+    concentrations,
+    totalAtrRiskExposure: Math.round(totalAtrRiskExposure),
+    cashBufferRating,
+    cashBufferPct,
+    technicalBiases,
+  };
+
+  // 2. Execution & Behavioral Analytics
+  const sellTrades = portfolio.trades.filter((t) => t.side === 'SELL');
+  const winningTrades = sellTrades.filter((t) => t.realizedPnl > 0);
+  const losingTrades = sellTrades.filter((t) => t.realizedPnl < 0);
+  const totalTrades = sellTrades.length;
+  const winRatePct = totalTrades > 0 ? Number(((winningTrades.length / totalTrades) * 100).toFixed(1)) : 0;
+
+  const grossProfit = winningTrades.reduce((acc, t) => acc + t.realizedPnl, 0);
+  const grossLoss = Math.abs(losingTrades.reduce((acc, t) => acc + t.realizedPnl, 0));
+  const profitFactor =
+    grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : grossProfit > 0 ? 99.99 : null;
+  const avgWin = winningTrades.length > 0 ? Math.round(grossProfit / winningTrades.length) : 0;
+  const avgLoss = losingTrades.length > 0 ? Math.round(grossLoss / losingTrades.length) : 0;
+  const payoffRatio = avgLoss > 0 ? Number((avgWin / avgLoss).toFixed(2)) : null;
+
+  const largestWin = sellTrades.length > 0 ? Math.max(0, ...sellTrades.map((t) => t.realizedPnl)) : 0;
+  const largestLoss = sellTrades.length > 0 ? Math.min(0, ...sellTrades.map((t) => t.realizedPnl)) : 0;
+
+  const marketOrdersCount = portfolio.orders.filter((o) => o.orderType === 'MARKET').length;
+  const limitOrdersCount = portfolio.orders.filter((o) => o.orderType === 'LIMIT').length;
+  const executedOrders = portfolio.orders.filter((o) => o.status === 'EXECUTED').length;
+  const fillRatePct =
+    portfolio.orders.length > 0
+      ? Number(((executedOrders / portfolio.orders.length) * 100).toFixed(1))
+      : 100;
+
+  let disciplineScore = 75;
+  const remarks: string[] = [];
+
+  if (cashBufferRating === 'OPTIMAL') {
+    disciplineScore += 10;
+    remarks.push('Optimal cash buffer maintained (10%–55%), allowing tactical flexibility.');
+  } else if (cashBufferRating === 'LOW') {
+    disciplineScore -= 15;
+    remarks.push('Cash reserve is low (<10%); elevated exposure to market downturns.');
+  } else {
+    remarks.push('High cash buffer (>55%) reduces drawdowns but creates cash drag in bull runs.');
+  }
+
+  if (limitOrdersCount > 0) {
+    disciplineScore += 10;
+    remarks.push('Demonstrated execution patience using disciplined limit orders.');
+  }
+
+  if (concentrations.some((c) => c.isConcentrated)) {
+    disciplineScore -= 15;
+    const concSymbols = concentrations.filter((c) => c.isConcentrated).map((c) => c.symbol).join(', ');
+    remarks.push(`Concentration warning: Allocation exceeds 25% in ${concSymbols}.`);
+  } else if (totalHoldingsCount >= 3) {
+    disciplineScore += 5;
+    remarks.push('Good position diversification across multiple NIFTY 50 equities.');
+  }
+
+  if (totalTrades > 0) {
+    if (winRatePct >= 50) {
+      remarks.push(`Profitable execution history with a ${winRatePct}% win rate on closed trades.`);
+    } else {
+      remarks.push(`Win rate currently at ${winRatePct}%; prioritize cutting losses using 1.5× ATR stops.`);
+    }
+  } else {
+    remarks.push('No closed sell trades yet; behavioral scoring will refine as trades execute.');
+  }
+
+  disciplineScore = Math.max(20, Math.min(100, disciplineScore));
+
+  const behavioralAnalytics: PracticeBehavioralAnalytics = {
+    totalTrades,
+    winningTrades: winningTrades.length,
+    losingTrades: losingTrades.length,
+    winRatePct,
+    profitFactor,
+    avgWin,
+    avgLoss,
+    payoffRatio,
+    largestWin,
+    largestLoss,
+    marketOrdersCount,
+    limitOrdersCount,
+    fillRatePct,
+    disciplineScore,
+    disciplineRemarks: remarks,
+  };
+
+  // 3. Stress Scenarios
+  const stressScenarios: PracticeStressScenario[] = STANDARD_STRESS_SCENARIOS.map((sc) => {
+    const impacts = holdings.map((h) => {
+      const shockedPrice = Math.max(0.01, h.currentPrice * (1 + sc.marketShockPct));
+      const shockedMarketValue = Math.round(h.quantity * shockedPrice);
+      return {
+        symbol: h.symbol,
+        currentMarketValue: h.marketValue,
+        shockedMarketValue,
+        lossGain: Math.round(shockedMarketValue - h.marketValue),
+      };
+    });
+
+    const totalShockedHoldings = impacts.reduce((sum, imp) => sum + imp.shockedMarketValue, 0);
+    const shockedPortfolioValue = Math.round(portfolio.cashBalance + totalShockedHoldings);
+    const simulatedPnL = Math.round(shockedPortfolioValue - portfolio.totalPortfolioValue);
+    const simulatedPnLPct =
+      portfolio.totalPortfolioValue > 0
+        ? Number(((simulatedPnL / portfolio.totalPortfolioValue) * 100).toFixed(2))
+        : 0;
+
+    return {
+      id: sc.id,
+      name: sc.name,
+      description: sc.description,
+      marketShockPct: sc.marketShockPct * 100,
+      shockedPortfolioValue,
+      simulatedPnL,
+      simulatedPnLPct,
+      effectivePortfolioShockPct: simulatedPnLPct,
+      holdingImpacts: impacts,
+    };
+  });
+
+  return {
+    userId,
+    portfolio,
+    holdingsHealth,
+    behavioralAnalytics,
+    stressScenarios,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function simulateTradeImpact(
+  userId = DEFAULT_PRACTICE_USER_ID,
+  params: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    quantity: number;
+    price?: number;
+  },
+  dbPath?: string,
+): PracticeSimulatedOrderResult {
+  const snap = getPortfolioSnapshot(userId, dbPath);
+  const dataset = loadDatasets();
+  const symbol = params.symbol.trim().toUpperCase();
+  const rows = dataset.combinedBySymbol.get(symbol);
+  const currentPrice = rows && rows.length > 0 ? rows[rows.length - 1].close : 100;
+  const executionPrice = params.price && params.price > 0 ? params.price : currentPrice;
+  const qty = Math.max(1, Math.floor(params.quantity));
+  const tradeValue = Math.round(qty * executionPrice);
+
+  const existingHolding = snap.holdings.find((h) => h.symbol === symbol);
+  let canAfford = true;
+  let canExecute = true;
+  let issue: string | undefined;
+
+  let projectedCash = snap.cashBalance;
+  let projectedHoldingsMarketValue = snap.holdingsMarketValue;
+  let projectedSymbolHoldingValue = 0;
+
+  if (params.side === 'BUY') {
+    if (tradeValue > snap.cashBalance) {
+      canAfford = false;
+      canExecute = false;
+      issue = `Required cash ₹${tradeValue.toLocaleString('en-IN')} exceeds available virtual cash ₹${snap.cashBalance.toLocaleString('en-IN')}.`;
+    }
+    projectedCash = Math.max(0, snap.cashBalance - tradeValue);
+    const existingVal = existingHolding ? existingHolding.marketValue : 0;
+    projectedSymbolHoldingValue = existingVal + tradeValue;
+    projectedHoldingsMarketValue = snap.holdingsMarketValue + tradeValue;
+  } else {
+    const existingQty = existingHolding?.quantity ?? 0;
+    if (qty > existingQty) {
+      canExecute = false;
+      issue = `Requested sell quantity (${qty}) exceeds currently held shares (${existingQty} ${symbol}).`;
+    }
+    projectedCash = snap.cashBalance + tradeValue;
+    const existingVal = existingHolding ? existingHolding.marketValue : 0;
+    projectedSymbolHoldingValue = Math.max(0, existingVal - tradeValue);
+    projectedHoldingsMarketValue = Math.max(0, snap.holdingsMarketValue - tradeValue);
+  }
+
+  const projectedPortfolioValue = projectedCash + projectedHoldingsMarketValue;
+  const projectedAllocationPct =
+    projectedPortfolioValue > 0
+      ? Number(((projectedSymbolHoldingValue / projectedPortfolioValue) * 100).toFixed(2))
+      : 0;
+  const concentrationWarning = projectedAllocationPct > 25;
+
+  let projectedHoldingsCount = snap.holdings.length;
+  if (params.side === 'BUY' && !existingHolding) projectedHoldingsCount += 1;
+  if (params.side === 'SELL' && existingHolding && qty >= existingHolding.quantity) {
+    projectedHoldingsCount = Math.max(0, projectedHoldingsCount - 1);
+  }
+
+  return {
+    isSimulated: true,
+    simulationNote:
+      'Zero-mutation simulation: No actual order was placed and your virtual wallet remains completely unchanged.',
+    actualWalletBefore: {
+      cashBalance: snap.cashBalance,
+      totalPortfolioValue: snap.totalPortfolioValue,
+      holdingsCount: snap.holdings.length,
+    },
+    hypotheticalTrade: {
+      symbol,
+      side: params.side,
+      quantity: qty,
+      price: executionPrice,
+      totalValue: tradeValue,
+    },
+    canAfford,
+    canExecute,
+    executionIssue: issue,
+    projectedCashBalance: projectedCash,
+    projectedPortfolioValue,
+    projectedAllocationPct,
+    concentrationWarning,
+    projectedHoldingsCount,
+  };
 }

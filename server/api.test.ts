@@ -221,6 +221,23 @@ test('BULLSEYE AI full-stack API integration & RBAC suite', async () => {
       { token: brkToken, body: { symbol: 'RELIANCE', side: 'BUY', orderType: 'MARKET', quantity: 5 } },
     );
 
+    await callApi(
+      'RBAC blocks Investor from Practice Intelligence endpoint',
+      'GET',
+      '/api/practice/intelligence',
+      403,
+      '403 Forbidden for Investor calling /api/practice/intelligence',
+      { token: invToken },
+    );
+
+    await callApi(
+      'RBAC blocks unauthenticated request to Practice Intelligence',
+      'GET',
+      '/api/practice/intelligence',
+      401,
+      '401 Unauthorized for request missing token',
+    );
+
     // 8. Stock Data Retrieval & Technical Indicator Calculation
     const stockRes = await callApi(
       'Authenticated historical stock data retrieval (RELIANCE)',
@@ -481,6 +498,53 @@ test('BULLSEYE AI full-stack API integration & RBAC suite', async () => {
     const holdings = portRes.data.holdings as Array<{ symbol: string; quantity: number }>;
     assert.equal(holdings[0].symbol, 'RELIANCE');
     assert.equal(holdings[0].quantity, 6);
+    const cashBeforeSim = portRes.data.cashBalance as number;
+    const portfolioValBeforeSim = portRes.data.totalPortfolioValue as number;
+
+    // 12b. Practice Intelligence & Zero-Mutation Simulations
+    const intelRes = await callApi(
+      'Authenticated Practice Intelligence retrieves 5 diagnostic features',
+      'GET',
+      '/api/practice/intelligence',
+      200,
+      '200 OK returning holdingsHealth, behavioralAnalytics, and 5 stressScenarios',
+      { token: prcToken },
+    );
+    const intelData = intelRes.data as any;
+    assert.equal(intelData.portfolio.holdings.length, 1);
+    assert.equal(intelData.stressScenarios.length, 5);
+    assert.ok(intelData.holdingsHealth.diversificationScore > 0);
+    assert.equal(intelData.behavioralAnalytics.totalTrades, 1);
+
+    const simOrderRes = await callApi(
+      'Simulate hypothetical BUY 25 TCS shares via zero-mutation endpoint',
+      'POST',
+      '/api/practice/simulate-order',
+      200,
+      '200 OK returning projectedCash and projectedAllocation without modifying actual wallet',
+      {
+        token: prcToken,
+        body: { symbol: 'TCS', side: 'BUY', quantity: 25 },
+      },
+    );
+    const simOrderData = simOrderRes.data as any;
+    assert.equal(simOrderData.isSimulated, true);
+    assert.equal(simOrderData.canAfford, true);
+    assert.ok(simOrderData.projectedCashBalance < cashBeforeSim);
+
+    // Verify wallet balance is 100% UNTOUCHED by simulations
+    const portAfterSimRes = await callApi(
+      'Verify practice wallet is 100% unchanged after running simulations',
+      'GET',
+      '/api/practice/portfolio',
+      200,
+      '200 OK verifying cashBalance and holdings are identical down to the cent',
+      { token: prcToken },
+    );
+    const portAfterSimData = portAfterSimRes.data as any;
+    assert.equal(portAfterSimData.cashBalance, cashBeforeSim, 'Cash balance must not change after simulation');
+    assert.equal(portAfterSimData.totalPortfolioValue, portfolioValBeforeSim, 'Portfolio value must not change after simulation');
+    assert.equal(portAfterSimData.holdings.length, 1, 'Holdings count must remain 1');
 
     // 13. Multilingual User Preferences & Translated News API
     const prefUpdateRes = await callApi(

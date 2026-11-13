@@ -81,7 +81,9 @@ import {
   cancelPendingOrder,
   executeSimulatedOrder,
   getPortfolioSnapshot,
+  getPracticeIntelligence,
   resetPracticePortfolio,
+  simulateTradeImpact,
 } from './server/tradingStore.ts';
 import type {
   ClientRequestStatus,
@@ -1378,6 +1380,41 @@ export async function createBullseyeApp(options?: { withVite?: boolean }) {
     requireRole(['Practice Trader']),
     (req: AuthenticatedRequest, res) => {
       res.json({ portfolio: resetPracticePortfolio(req.authUser!.id) });
+    },
+  );
+
+  app.get(
+    '/api/practice/intelligence',
+    requireRole(['Practice Trader']),
+    (req: AuthenticatedRequest, res) => {
+      try {
+        res.json(getPracticeIntelligence(req.authUser!.id));
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : 'Practice intelligence failed' });
+      }
+    },
+  );
+
+  app.post(
+    '/api/practice/simulate-order',
+    requireRole(['Practice Trader']),
+    (req: AuthenticatedRequest, res) => {
+      try {
+        const symbol = String(req.body?.symbol ?? '').trim().toUpperCase();
+        const side = req.body?.side === 'SELL' ? 'SELL' : 'BUY';
+        const quantity = Number(req.body?.quantity ?? 1);
+        const price = req.body?.price !== undefined ? Number(req.body.price) : undefined;
+        res.json(
+          simulateTradeImpact(req.authUser!.id, {
+            symbol,
+            side,
+            quantity,
+            price,
+          }),
+        );
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : 'Simulation failed' });
+      }
     },
   );
 
