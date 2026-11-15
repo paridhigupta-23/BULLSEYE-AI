@@ -1,5 +1,14 @@
 # BULLSEYE AI — Invest Smarter. Understand Deeper.
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-BULLSEYE%20AI-20c997?style=for-the-badge)](https://bullseye-ai-m38y.vercel.app/)
+
+## Official Live Website
+
+**Production:** https://bullseye-ai-m38y.vercel.app/
+
+Use the official production website above to access the BULLSEYE AI platform. The live application is hosted on Vercel.
+
+
 A full-stack AI-powered algorithmic trading, quantitative research, and paper-trading platform built on real historical **NSE NIFTY 50** datasets (`2020-10-01` to `2025-09-30`).
 
 > **Historical Data Disclaimer**: All market candles, indicators, ML signals, backtests, and practice order reference prices come exclusively from the historical NIFTY 50 dataset ending **2025-09-30**. They are never fabricated or misrepresented as live 2026 market quotes.
