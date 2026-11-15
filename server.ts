@@ -3,7 +3,6 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer as createViteServer } from 'vite';
 import {
   authenticateCredentials,
   extractToken,
@@ -1457,10 +1456,15 @@ export async function createBullseyeApp(options?: { withVite?: boolean }) {
         res.sendFile(path.join(distDir, 'index.html'));
       });
     } else {
+      // Vite is required only for local development.
+      // Do not load Vite/Rolldown inside the Vercel API function.
+      const { createServer: createViteServer } = await import('vite');
+
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa',
       });
+
       app.use(vite.middlewares);
     }
   }
