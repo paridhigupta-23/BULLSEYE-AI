@@ -17,6 +17,9 @@ A full-stack AI-powered algorithmic trading, quantitative research, and paper-tr
 - `server/brokerStore.ts` — Unified Broker-Client roster (`broker_clients`), client portfolio analytics, advisory requests (`client_requests`), AI-grounded Expert Advice (`expert_advice`), and two-way messaging (`broker_messages`)
 - `server/translationService.ts` — SQLite-cached (`translation_cache`) Hindi (`hi`) & Telugu (`te`) translation service with Gemini batch translation and deterministic financial fallback
 - `server/tradingStore.ts` — SQLite-backed Practice Trading simulator (`₹10,00,000` starting virtual wallet)
+- `server/services/practiceIntelligenceService.ts` & `server/routes/practiceIntelligence.ts` — Practice Intelligence module backend with deterministic mistake detector, what-if simulator, personality analyzer, prediction autopsy, and grounded Gemini AI trading coach
+- `src/practice-intelligence/` — Pure calculation engines and snapshot adapters (Mistake Detector, What-If Simulator, Trader Personality Analyzer, Prediction Autopsy, AI Coach)
+- `src/components/practice-intelligence/` — Dark-slate fintech UI components (`MistakeDetectorView`, `WhatIfSimulatorView`, `PersonalityAnalyzerView`, `PredictionAutopsyView`, `AICoachView`, `PracticeIntelligencePanel`)
 - `server/geminiService.ts` — Server-side `@google/genai` assistant endpoint (`/api/ai/chat`)
 - `server/*.test.ts` — Pure logic unit tests, broker/translation unit suite, and full Express HTTP API & RBAC test suite
 - `src/` — React 19 + TypeScript + Tailwind CSS v4 + TradingView Lightweight Charts v5 + Recharts frontend featuring a **7-page Broker Portal** (`Home`, `My Clients`, `Client Portfolios`, `Client Requests`, `Expert Advice`, `Messages`, `Profile`) and a **fully multilingual Investor Portal** (`en`, `hi`, `te`)
@@ -103,8 +106,8 @@ npm run test:api
 | `GET` / `POST` | `/api/investor/broker`, `/api/investor/broker/link`, `/api/investor/requests`, `/api/investor/advice`, `/api/investor/advice/:id/read`, `/api/investor/messages` | `Investor` ONLY | Linked advisor profile, client requests, translated Expert Advice & direct messaging |
 | `GET` / `POST` / `PATCH` | `/api/broker/clients`, `/api/broker/portfolios`, `/api/broker/requests`, `/api/broker/advice/*`, `/api/broker/messages/*` | `Broker / Quant` ONLY | Client roster, aggregate/stock portfolios, advisory queue, AI-grounded Expert Advice & messaging |
 | `GET` / `POST` | `/api/dataset/summary`, `/api/dataset/reload`, `/api/ml/train`, `/api/quant/backtest`, `/api/quant/monitoring` | `Broker / Quant` ONLY | 9-stage pipeline, chronological ML training, backtesting & SQLite run logs |
-| `GET` | `/api/quant/final-performance` | `Broker / Quant` ONLY | Consolidated 5-category Final Performance report (Model, Trading, Tail Risk, Latency, Costs) |
 | `GET` / `POST` | `/api/practice/portfolio`, `/api/practice/order`, `/api/practice/order/:id/cancel`, `/api/practice/reset` | `Practice Trader` ONLY | Virtual ₹10,00,000 paper trading engine |
+| `GET` / `POST` | `/api/practice-intelligence/overview`, `/analyze`, `/what-if`, `/personality`, `/autopsy`, `/coach` | `Practice Trader` ONLY | Practice Intelligence Module (Mistake Detector, What-If Simulator, Personality Analyzer, Prediction Autopsy, AI Trading Coach) |
 | `POST` | `/api/ai/chat` | Public / Contextual | Server-side `@google/genai` multilingual assistant |
 
 See `docs/API_TEST_REPORT.md` for full executed request/response test verification results.

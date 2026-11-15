@@ -12,18 +12,8 @@ export function getDbPath(): string {
   if (process.env.BULLSEYE_DB_PATH) {
     return path.resolve(process.cwd(), process.env.BULLSEYE_DB_PATH);
   }
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    const tmpDir = os.tmpdir();
-    const tmpDbPath = path.join(tmpDir, 'bullseye.db');
-    const localDbPath = path.resolve(process.cwd(), 'data', 'bullseye.db');
-    if (fs.existsSync(localDbPath) && !fs.existsSync(tmpDbPath)) {
-      try {
-        fs.copyFileSync(localDbPath, tmpDbPath);
-      } catch {
-        // initializeSchema will initialize tables if copy fails
-      }
-    }
-    return tmpDbPath;
+  if (process.env.VERCEL) {
+    return path.join(os.tmpdir(), 'bullseye.db');
   }
   return path.resolve(process.cwd(), 'data', 'bullseye.db');
 }

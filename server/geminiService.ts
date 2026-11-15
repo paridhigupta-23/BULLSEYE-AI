@@ -61,9 +61,8 @@ ${contextJson}`;
     : payload.message;
 
   try {
-    const modelName = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
     const response = await ai.models.generateContent({
-      model: modelName,
+      model: 'gemini-4-hydrogen',
       contents: fullPrompt,
       config: {
         systemInstruction,

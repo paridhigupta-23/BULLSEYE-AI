@@ -1379,6 +1379,9 @@ interface BrokerProfilePageProps {
 
 export const BrokerProfilePage: React.FC<BrokerProfilePageProps> = ({
   user,
+  clientsCount = 0,
+  pendingRequestsCount = 0,
+  adviceCount = 0,
   researchStats,
   onLogout,
 }) => {
@@ -1395,7 +1398,7 @@ export const BrokerProfilePage: React.FC<BrokerProfilePageProps> = ({
                 Broker &amp; Quant Account Profile
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Role-restricted quantitative research terminal credentials
+                Role-restricted quantitative &amp; client advisory credentials
               </p>
             </div>
           </div>
@@ -1438,37 +1441,48 @@ export const BrokerProfilePage: React.FC<BrokerProfilePageProps> = ({
 
       <section className="rounded-2xl border border-slate-200/90 bg-white p-6 lg:col-span-5 dark:border-slate-800 dark:bg-[#1F2937]">
         <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
-          Research Terminal Status
+          Desk &amp; Research Summary
         </h3>
-        <div className="mt-4 space-y-3 text-xs tabular-nums">
-          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3.5 dark:bg-[#111827]">
-            <span className="text-slate-600 dark:text-slate-300">Dataset Engine</span>
+        <div className="mt-4 space-y-2.5 text-xs tabular-nums">
+          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3 dark:bg-[#111827]">
+            <span className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+              <Users className="h-4 w-4 text-[#087F5B] dark:text-[#34D399]" />
+              <span>Linked Investor Clients</span>
+            </span>
+            <span className="font-mono font-bold text-slate-900 dark:text-white">{clientsCount}</span>
+          </div>
+          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3 dark:bg-[#111827]">
+            <span className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+              <ClipboardList className="h-4 w-4 text-[#782F46] dark:text-[#B76E85]" />
+              <span>Pending Client Requests</span>
+            </span>
+            <span className="font-mono font-bold text-slate-900 dark:text-white">
+              {pendingRequestsCount}
+            </span>
+          </div>
+          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3 dark:bg-[#111827]">
+            <span className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+              <Briefcase className="h-4 w-4 text-[#087F5B] dark:text-[#34D399]" />
+              <span>Expert Advice Notes Issued</span>
+            </span>
+            <span className="font-mono font-bold text-slate-900 dark:text-white">{adviceCount}</span>
+          </div>
+          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3 dark:bg-[#111827]">
+            <span className="text-slate-600 dark:text-slate-300">Dataset &amp; Active Models</span>
             <span className="font-mono font-bold text-[#087F5B] dark:text-[#34D399]">
-              {researchStats?.datasetStatus ?? 'Loaded & Validated'} ({researchStats?.totalStocks ?? 50} NSE)
+              {researchStats?.totalStocks ?? 50} NSE · {researchStats?.trainedModelsCount ?? 0} models
             </span>
           </div>
-          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3.5 dark:bg-[#111827]">
-            <span className="text-slate-600 dark:text-slate-300">Trained Models Active</span>
+          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3 dark:bg-[#111827]">
+            <span className="text-slate-600 dark:text-slate-300">Saved Experiments / Backtests</span>
             <span className="font-mono font-bold text-slate-900 dark:text-white">
-              {researchStats?.trainedModelsCount ?? 0}
-            </span>
-          </div>
-          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3.5 dark:bg-[#111827]">
-            <span className="text-slate-600 dark:text-slate-300">Saved Experiments (SQLite)</span>
-            <span className="font-mono font-bold text-slate-900 dark:text-white">
-              {researchStats?.experimentsCount ?? 0}
-            </span>
-          </div>
-          <div className="flex items-center justify-between rounded-xl bg-[#F8F6F0] p-3.5 dark:bg-[#111827]">
-            <span className="text-slate-600 dark:text-slate-300">Logged Backtests (SQLite)</span>
-            <span className="font-mono font-bold text-slate-900 dark:text-white">
-              {researchStats?.backtestsCount ?? 0}
+              {researchStats?.experimentsCount ?? 0} / {researchStats?.backtestsCount ?? 0}
             </span>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-[11px] text-slate-500 dark:border-slate-700 dark:text-slate-400">
             <ShieldCheck className="h-4 w-4 shrink-0 text-[#087F5B] dark:text-[#34D399]" />
             <span>
-              Zero-Leakage Chronological Splits &amp; Walk-Forward Backtesting Enforced Across All Sessions.
+              Share your Broker User ID (<code className="font-mono font-bold">{user?.userCode}</code>) with Investors so they can link directly from their Profile tab.
             </span>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Bot, BrainCircuit, LogOut, RotateCcw, ShieldAlert, XCircle } from 'lucide-react';
+import { Bot, LogOut, RotateCcw, ShieldAlert, XCircle, LayoutDashboard, BrainCircuit } from 'lucide-react';
 import { useAppContext } from '../context/AppContext.tsx';
 import { api } from '../services/api.ts';
 import {
@@ -9,7 +9,7 @@ import {
   type StockSummary,
 } from '../types/index.ts';
 import { AllocationPieChart } from './charts/IndicatorCharts.tsx';
-import { PracticeIntelligenceView } from './practice/PracticeIntelligenceView.tsx';
+import { PracticeIntelligencePanel } from './practice-intelligence/PracticeIntelligencePanel.tsx';
 
 interface PracticePortalProps {
   stocks: StockSummary[];
@@ -18,22 +18,6 @@ interface PracticePortalProps {
 export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
   const { selectedSymbol, setSelectedSymbol, t, openAiWithContext, user, logoutUser } =
     useAppContext();
-
-  const [subPortalTab, setSubPortalTab] = useState<'home' | 'intelligence'>(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tParam = params.get('tab');
-    return tParam === 'intelligence' ? 'intelligence' : 'home';
-  });
-
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (subPortalTab === 'home') {
-      url.searchParams.delete('tab');
-    } else {
-      url.searchParams.set('tab', 'intelligence');
-    }
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [subPortalTab]);
 
   const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +28,23 @@ export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'holdings' | 'orders' | 'trades'>('holdings');
+  const [subpage, setSubpage] = useState<'home' | 'intelligence'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get('tab') || params.get('page') || params.get('subpage');
+    return p === 'intelligence' ? 'intelligence' : 'home';
+  });
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (subpage === 'home') {
+      url.searchParams.delete('page');
+      url.searchParams.delete('subpage');
+      url.searchParams.delete('tab');
+    } else {
+      url.searchParams.set('tab', 'intelligence');
+    }
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [subpage]);
 
   const currentStock = stocks.find((s) => s.symbol === selectedSymbol) ?? stocks[0];
 
@@ -54,20 +55,6 @@ export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
       setPortfolio(snap);
     } catch (err) {
       setFeedback({ type: 'err', text: err instanceof Error ? err.message : 'Failed to load portfolio' });
-      setPortfolio((prev) => prev ?? {
-        startingCapital: 1000000,
-        cashBalance: 1000000,
-        holdingsMarketValue: 0,
-        totalPortfolioValue: 1000000,
-        realizedPnl: 0,
-        unrealizedPnl: 0,
-        totalPnl: 0,
-        totalReturnPct: 0,
-        holdings: [],
-        orders: [],
-        trades: [],
-        equityHistory: [{ timestamp: new Date().toISOString(), portfolioValue: 1000000, cashBalance: 1000000 }],
-      });
     } finally {
       setLoading(false);
     }
@@ -161,53 +148,48 @@ export const PracticePortal: React.FC<PracticePortalProps> = ({ stocks }) => {
         </button>
       </div>
 
-      {/* Sub-Portal Navigation: Home vs Practice Intelligence */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 dark:border-slate-800">
-        <div className="flex gap-2">
+      {/* Practice Portal Subpage Switcher: Home vs Practice Intelligence */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800">
+        <nav className="flex space-x-6">
           <button
             type="button"
-            onClick={() => setSubPortalTab('home')}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
-              subPortalTab === 'home'
-                ? 'bg-[#087F5B] text-white shadow-sm dark:bg-[#34D399] dark:text-slate-950'
-                : 'bg-white text-slate-700 hover:bg-slate-100 dark:bg-[#1F2937] dark:text-slate-300 dark:hover:bg-slate-800'
+            onClick={() => setSubpage('home')}
+            className={`inline-flex items-center gap-2 border-b-2 py-3 px-1 text-sm font-semibold transition-all cursor-pointer ${
+              subpage === 'home'
+                ? 'border-[#087F5B] text-[#087F5B] dark:border-[#34D399] dark:text-[#34D399]'
+                : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-slate-200'
             }`}
           >
-            <Activity className="h-3.5 w-3.5" />
-            <span>Trading Terminal (Home)</span>
+            <LayoutDashboard className="h-4 w-4" />
+            <span>Home</span>
           </button>
-          <button
-            type="button"
-            onClick={() => setSubPortalTab('intelligence')}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
-              subPortalTab === 'intelligence'
-                ? 'bg-[#087F5B] text-white shadow-sm dark:bg-[#34D399] dark:text-slate-950'
-                : 'bg-white text-slate-700 hover:bg-slate-100 dark:bg-[#1F2937] dark:text-slate-300 dark:hover:bg-slate-800'
-            }`}
-          >
-            <BrainCircuit className="h-3.5 w-3.5" />
-            <span>Practice Intelligence (5 Simulators)</span>
-          </button>
-        </div>
 
-        <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-          Virtual Capital: ₹10,00,000.00 · Mode: {subPortalTab === 'home' ? 'Execution' : 'Intelligence'}
-        </span>
+          <button
+            type="button"
+            onClick={() => setSubpage('intelligence')}
+            className={`inline-flex items-center gap-2 border-b-2 py-3 px-1 text-sm font-semibold transition-all cursor-pointer ${
+              subpage === 'intelligence'
+                ? 'border-cyan-500 text-cyan-600 dark:border-cyan-400 dark:text-cyan-400'
+                : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-slate-200'
+            }`}
+          >
+            <BrainCircuit className="h-4 w-4" />
+            <span>Practice Intelligence</span>
+            <span className="rounded-full bg-cyan-500/10 dark:bg-cyan-950/40 px-2 py-0.5 text-[10px] font-bold text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">
+              AI Powered
+            </span>
+          </button>
+        </nav>
       </div>
 
-      {subPortalTab === 'intelligence' && portfolio ? (
-        <PracticeIntelligenceView
-          stocks={stocks}
-          portfolio={portfolio}
-          onRefreshPortfolio={loadPortfolio}
-          user={user}
-        />
+      {subpage === 'intelligence' ? (
+        <PracticeIntelligencePanel stocks={stocks} onNavigateHome={() => setSubpage('home')} />
       ) : (
         <>
-          {/* Simulated Notice */}
-          <div className="rounded-xl border border-[#087F5B]/30 bg-[#087F5B]/10 px-4 py-3 text-xs font-medium text-slate-900 dark:border-[#34D399]/30 dark:bg-[#34D399]/10 dark:text-slate-100">
-            {t.simulatedBanner} Reference prices come from the historical dataset close ({currentStock?.latestDate ?? '2025-09-30'}).
-          </div>
+      {/* Simulated Notice */}
+      <div className="rounded-xl border border-[#087F5B]/30 bg-[#087F5B]/10 px-4 py-3 text-xs font-medium text-slate-900 dark:border-[#34D399]/30 dark:bg-[#34D399]/10 dark:text-slate-100">
+        {t.simulatedBanner} Reference prices come from the historical dataset close ({currentStock?.latestDate ?? '2025-09-30'}).
+      </div>
 
       {/* Wallet KPIs */}
       {loading || !portfolio ? (

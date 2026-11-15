@@ -85,6 +85,7 @@ import {
   resetPracticePortfolio,
   simulateTradeImpact,
 } from './server/tradingStore.ts';
+import { practiceIntelligenceRouter } from './server/routes/practiceIntelligence.ts';
 import type {
   ClientRequestStatus,
   LanguageCode,
@@ -1417,6 +1418,9 @@ export async function createBullseyeApp(options?: { withVite?: boolean }) {
       }
     },
   );
+
+  // ==================== PRACTICE INTELLIGENCE MODULE ====================
+  app.use('/api/practice-intelligence', practiceIntelligenceRouter);
 
   // ==================== GEMINI AI ASSISTANT ====================
   app.post('/api/ai/chat', async (req, res) => {
