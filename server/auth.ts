@@ -56,6 +56,27 @@ export function extractToken(req: Request): string | null {
   return null;
 }
 
+function getAuthSecret(): string {
+  const configured = process.env.BULLSEYE_AUTH_SECRET;
+  if (configured && configured.length >= 32) return configured;
+  if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+    throw new Error('BULLSEYE_AUTH_SECRET must be configured with at least 32 characters.');
+  }
+  return 'bullseye-local-development-secret-do-not-use-in-production';
+}
+
+function issueToken(user: AuthUser): { token: string; expiresAt: string } {
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const payload = Buffer.from(JSON.stringify({
+    sub: user.id,
+    role: user.role,
+    exp: Math.floor(expiresAt.getTime() / 1000),
+    nonce: crypto.randomBytes(16).toString('hex'),
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', getAuthSecret()).update(payload).digest('base64url');
+  return { token: `${payload}.${signature}`, expiresAt: expiresAt.toISOString() };
+}
+
 export function authenticateCredentials(params: {
   identifier: string;
   password: string;
@@ -92,21 +113,9 @@ export function authenticateCredentials(params: {
     };
   }
 
-  const token = crypto.randomBytes(32).toString('hex');
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-
-  db.prepare(
-    `INSERT INTO sessions (token, user_id, role, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(token, row.id, row.role, now.toISOString(), expiresAt);
-
-  return {
-    ok: true,
-    token,
-    expiresAt,
-    user: toSafeUser(row),
-  };
+  const user = toSafeUser(row);
+  const session = issueToken(user);
+  return { ok: true, ...session, user };
 }
 
 export function registerAccount(params: {
@@ -171,42 +180,45 @@ export function registerAccount(params: {
     ).run(id, now);
   }
 
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-  db.prepare(
-    `INSERT INTO sessions (token, user_id, role, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(token, id, role, now, expiresAt);
-
-  return {
-    ok: true,
-    token,
-    expiresAt,
-    user: { id, userCode, name, email, role, preferredLanguage, createdAt: now },
+  const user: AuthUser = {
+    id, userCode, name, email, role, preferredLanguage, createdAt: now,
   };
+  const session = issueToken(user);
+  return { ok: true, ...session, user };
 }
 
 export function resolveSession(token: string | null): AuthUser | null {
   if (!token) return null;
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT u.id, u.user_code, u.name, u.email, u.role, u.password_hash, u.preferred_language, u.created_at, s.expires_at
-       FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.token = ?
-       LIMIT 1`,
-    )
-    .get(token) as (DbUserRow & { expires_at: string }) | undefined;
+  try {
+    const [payload, suppliedSignature, extra] = token.split('.');
+    if (!payload || !suppliedSignature || extra) return null;
+    const expectedSignature = crypto.createHmac('sha256', getAuthSecret()).update(payload).digest();
+    const actualSignature = Buffer.from(suppliedSignature, 'base64url');
+    if (actualSignature.length !== expectedSignature.length ||
+        !crypto.timingSafeEqual(actualSignature, expectedSignature)) return null;
 
-  if (!row) return null;
-  if (new Date(row.expires_at).getTime() <= Date.now()) {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      sub?: string; role?: UserRole; exp?: number;
+    };
+    if (!claims.sub || !claims.exp || claims.exp <= Math.floor(Date.now() / 1000)) return null;
+
+    const row = getDb()
+      .prepare(
+        `SELECT id, user_code, name, email, role, password_hash, preferred_language, created_at
+         FROM users WHERE id = ? LIMIT 1`,
+      )
+      .get(claims.sub) as DbUserRow | undefined;
+    if (!row || row.role !== claims.role) return null;
+    return toSafeUser(row);
+  } catch {
     return null;
   }
+}
 
-  return toSafeUser(row);
+export function revokeSession(_token: string | null): boolean {
+  // Signed tokens are stateless. The client clears its token and the HTTP-only cookie is expired.
+  // Server-side revocation requires a durable shared session store.
+  return false;
 }
 
 export function updateUserLanguagePreference(
