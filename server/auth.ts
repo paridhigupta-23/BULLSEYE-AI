@@ -231,12 +231,6 @@ export function updateUserLanguagePreference(
   return normalized;
 }
 
-export function revokeSession(token: string | null): boolean {
-  if (!token) return false;
-  const db = getDb();
-  const result = db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-  return Number(result.changes) > 0;
-}
 
 export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
   const token = extractToken(req);
